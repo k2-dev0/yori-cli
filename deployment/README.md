@@ -34,6 +34,15 @@ docker compose -f deployment/compose.yaml --profile tools run --rm admin inspect
 
 ## 3. 日常の管理操作
 
+clone せずに実行する場合は、公開packageを `npx` から使う（DBへ到達できるホストで実行する）。
+
+```sh
+export DATABASE_URL='postgres://yori:yori@<host>:5432/yori'
+npx --yes yori-cli inspect <company-uuid>
+```
+
+Compose tools profile から実行する場合:
+
 ```sh
 # 会社・社員・案件の追加
 docker compose -f deployment/compose.yaml --profile tools run --rm \
