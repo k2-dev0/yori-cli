@@ -1,0 +1,46 @@
+# yori-cli の通常Compose。管理CLI (admin) だけを持ち、DBはyori本体のComposeが作る。
+# adminはyori本体のCompose networkへ参加し、`db:5432` の共有DBへ接続する。
+# 既定ではyori本体のproject (yori) が作る network `yori_default` を使う。
+name: yori-cli
+
+x-node-service: &node-service
+  image: node:24.21.0-bookworm-slim@sha256:0e0ff40c39bc087845bfb27465a0df4ea419520094bc35842ff83dd8cbe6f9b6
+  working_dir: /app
+  volumes:
+    - ..:/app
+    - yori-cli-node-modules:/app/node_modules
+    - yori-cli-npm-cache:/root/.npm
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+
+services:
+  # 通常upでは起動しない。`run --rm admin <command>` の引数をそのままCLIへ渡す。
+  admin:
+    <<: *node-service
+    profiles:
+      - tools
+    networks:
+      - yori
+    environment:
+      DATABASE_URL: ${YORI_ADMIN_DATABASE_URL:-postgres://yori:yori@db:5432/yori}
+    entrypoint:
+      - sh
+      - -c
+      # 依存installの出力をstdout/stderrへ混ぜない（CLIの1行JSON・固定code契約を守る）。失敗時だけlogをstderrへ出す。
+      - test -x node_modules/.bin/tsx || { npm ci --no-audit --no-fund >/tmp/yori-cli-npm-ci.log 2>&1 || { cat /tmp/yori-cli-npm-ci.log >&2; exit 1; }; }; exec ./node_modules/.bin/tsx src/admin/cli.ts "$@"
+      - --
+
+networks:
+  # yori本体のComposeが作るnetworkへ参加する。yori-cli側では作成しない。
+  yori:
+    name: ${YORI_ADMIN_NETWORK:-yori_default}
+    external: true
+
+volumes:
+  yori-cli-node-modules:
+    name: ${YORI_CLI_NODE_MODULES_VOLUME:-yori-cli-node-modules}
+  yori-cli-npm-cache:
+    name: ${YORI_CLI_NPM_CACHE_VOLUME:-yori-cli-npm-cache}
