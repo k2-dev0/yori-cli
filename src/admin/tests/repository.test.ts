@@ -21,7 +21,10 @@ describe('repository identifier の正規化', () => {
   it('既定以外のportは識別子へ残す', () => {
     assert.equal(normalizeRepositoryIdentifier('https://github.com:8443/Org/Repo'), 'github.com:8443/Org/Repo');
     assert.equal(normalizeRepositoryIdentifier('ssh://git@github.com:2222/Org/Repo.git'), 'github.com:2222/Org/Repo');
-    assert.equal(normalizeRepositoryIdentifier('git@github.com:2222/Org/Repo.git'), 'github.com:2222/Org/Repo');
+    assert.equal(normalizeRepositoryIdentifier('github.com:2222/Org/Repo'), 'github.com:2222/Org/Repo');
+    // scp形式の `host:2222/path` はcollectorと同じくportではなくpathの一部として解釈する
+    // (yori src/collector/remote.ts:38 の正規表現)。collectorと違うidentifierを作らない。
+    assert.equal(normalizeRepositoryIdentifier('git@github.com:2222/Org/Repo.git'), 'github.com/2222/Org/Repo');
   });
 
   it('local path・空文字・解釈できない値はnullにする', () => {
