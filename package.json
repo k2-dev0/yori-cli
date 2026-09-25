@@ -8,7 +8,7 @@
     "node": ">=24"
   },
   "scripts": {
-    "test": "node --import tsx --test --test-concurrency=1 \"src/**/*.test.ts\"",
+    "test": "DATABASE_URL=${DATABASE_URL:-postgres://yori:yori@127.0.0.1:55432/yori} node --import tsx --test --test-concurrency=1 \"src/**/*.test.ts\"",
     "test:db": "node deployment/run-tests.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "lint": "eslint .",
