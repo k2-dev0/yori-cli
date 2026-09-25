@@ -1,8 +1,11 @@
-// 未実装の骨子。yori fixture (src/db/tests/fixtures.ts:60-68) と同じ形式・hashで発行する。
+import { createHash, randomBytes } from 'node:crypto';
+
+// 生tokenは `yori_` + 24 random bytesのbase64url。既存fixture (yori src/db/tests/fixtures.ts:61) と同じ形式。
 export function generateAuthToken(): string {
-  throw new Error('未実装');
+  return `yori_${randomBytes(24).toString('base64url')}`;
 }
 
-export function hashAuthToken(_token: string): Buffer {
-  throw new Error('未実装');
+// API認証 (yori src/api/events.ts:292-294) と同じくUTF-8バイト列のSHA-256を保存する。
+export function hashAuthToken(token: string): Buffer {
+  return createHash('sha256').update(token, 'utf8').digest();
 }
