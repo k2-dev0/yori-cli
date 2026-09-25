@@ -1,4 +1,5 @@
-import { readFileSync } from 'node:fs';
+#!/usr/bin/env node
+import { readFileSync, realpathSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import type { Pool } from 'pg';
 import { z } from 'zod';
@@ -136,9 +137,24 @@ export async function runCli(argv: string[], env: NodeJS.ProcessEnv = process.en
   }
 }
 
-// tsxから直接起動された時だけ実行する。テストはrunCliをimportして呼ぶ。
-const entry = process.argv[1];
-if (entry !== undefined && import.meta.url === pathToFileURL(entry).href) {
+// 公開packageのbinは node_modules/.bin/<name> からsymlink経由で起動される。
+// argv[1]がsymlinkのまま渡されても本体として実行するため、実体pathでも判定する。
+function isMainEntry(): boolean {
+  const entry = process.argv[1];
+  if (entry === undefined) {
+    return false;
+  }
+  const candidates = [pathToFileURL(entry).href];
+  try {
+    candidates.push(pathToFileURL(realpathSync(entry)).href);
+  } catch {
+    // 実体を解決できない場合はargv[1]だけで判定する。
+  }
+  return candidates.includes(import.meta.url);
+}
+
+// tsxから直接起動された時、またはbinとして実行された時だけ本体を動かす。テストはrunCliをimportして呼ぶ。
+if (isMainEntry()) {
   runCli(process.argv.slice(2))
     .then((code) => {
       process.exitCode = code;
