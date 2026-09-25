@@ -464,7 +464,8 @@ describe('異常系', () => {
     expectFail(await runWithFile('company:create', 'broken.json', '{ not json', unreachable), 'invalid_input_file');
     expectFail(await runWithFile('company:create', 'unknown.json', { name: 'a', extra: true }, unreachable), 'invalid_input');
     expectFail(await runWithFile('employee:create', 'bad.json', { company_id: 'not-a-uuid', display_name: 'a' }, unreachable), 'invalid_input');
-    expectFail(await runWithFile('token:issue', 'bad.json', { company_id: companyMissingUuid, employee_id: companyMissingUuid }, unreachable), 'invalid_input');
+    expectFail(await runWithFile('token:issue', 'bad.json', { company_id: 'not-a-uuid', employee_id: companyMissingUuid }, unreachable), 'invalid_input');
+    expectFail(await runWithFile('token:revoke', 'bad.json', { company_id: companyMissingUuid, token_id: 'not-a-uuid' }, unreachable), 'invalid_input');
     expectFail(await runWithFile('company:create', 'empty.json', {}, unreachable), 'invalid_input');
   });
 
@@ -611,8 +612,11 @@ describe('情報漏えい', () => {
 
     const run = await runWithFile('token:issue', 'token.json', { company_id: companyId, employee_id: employeeId });
     const stdout = parseSuccessJson(run);
-    assert.equal(run.stdout.split(token).length - 1, 1, '生tokenがstdoutへ複数回現れている');
-    assert.equal(str(stdout.token), token);
+    const second = str(stdout.token);
+    assert.notEqual(second, token, '再発行で同じ生tokenを返している');
+    assert.equal(run.stdout.split(second).length - 1, 1, '生tokenがstdoutへ複数回現れている');
+    assert.ok(!run.stdout.includes(token), '先に発行した生tokenが後続の出力へ現れている');
+    assert.equal(await countRows(pool, 'auth_tokens'), 2);
   });
 
   it('失敗経路にtoken・hash・DATABASE_URL・入力file本文・DBエラー本文を出さない', async () => {
