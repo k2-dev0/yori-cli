@@ -8,14 +8,25 @@
 
 ## 1. 実行方法
 
-### ホスト
+### npx（clone不要・推奨）
+
+```sh
+export DATABASE_URL='postgres://yori:yori@<host>:5432/yori'
+npx --yes yori-cli inspect <company-uuid>
+```
+
+bin名で実行する場合は `npx --yes --package=yori-cli yori-admin inspect <company-uuid>`。常時使う場合は `npm install -g yori-cli` で `yori-admin` を直接実行できる。
+
+`DATABASE_URL` はargvで受け取らない（shell履歴へ値を残さないため）。未設定・空の場合は `invalid_admin_config` で終了する。
+
+### リポジトリ内（開発時）
 
 ```sh
 export DATABASE_URL='postgres://yori:yori@<host>:5432/yori'
 npm run --silent admin -- inspect <company-uuid>
 ```
 
-`npm run` のbannerをstdoutへ混ぜないため `--silent` を使う。`DATABASE_URL` が未設定・空の場合は `invalid_admin_config` で終了する。
+`npm run` のbannerをstdoutへ混ぜないため `--silent` を使う。
 
 ### Compose (tools profile)
 
