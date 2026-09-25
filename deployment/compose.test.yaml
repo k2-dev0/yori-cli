@@ -1,0 +1,40 @@
+# yori-cli のテスト専用Compose。yori本体の project (yori) と volume を参照しない。
+# volumeはnameを明示せずCompose projectスコープで隔離し、--project-nameを変えても開発volumeへ触れない。
+# テストはホストの node --test から実行するため、DBはloopbackのみへ公開する（外部interfaceへは公開しない）。
+
+services:
+  db:
+    image: pgvector/pgvector:0.8.6-pg18-trixie@sha256:78bf48b801e792f99e3ac62b5036fd3876e9be48afda16c1e331af1c75ceb2ff
+    environment:
+      POSTGRES_USER: yori
+      POSTGRES_PASSWORD: yori
+      POSTGRES_DB: yori
+    command:
+      - postgres
+      - -c
+      - shared_buffers=256MB
+      - -c
+      - work_mem=4MB
+      - -c
+      - maintenance_work_mem=64MB
+      - -c
+      - statement_timeout=30000
+    ports:
+      - "127.0.0.1:${YORI_CLI_TEST_DB_PORT:-55432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U yori -d yori"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+      start_period: 5s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+# volume名はCompose projectスコープの既定に任せ、別project・開発volumeと共有しない。
+volumes:
+  pgdata:
