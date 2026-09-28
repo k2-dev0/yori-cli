@@ -46,7 +46,10 @@ describe('bin entrypoint', () => {
   it('公開packageの実行コマンドをyoriだけに固定する', async () => {
     const packageJson = JSON.parse(await readFile(path.join(REPO_ROOT, 'package.json'), 'utf8'));
     assert.deepEqual(packageJson.bin, { yori: 'dist/yori.cjs' });
-    assert.deepEqual(packageJson.files, ['dist/yori.cjs', 'dist/yori.cjs.map']);
+    assert.deepEqual(
+      [...packageJson.files].sort(),
+      ['dist/collector/collector-manifest.json', 'dist/collector/yori-collector.mjs', 'dist/yori.cjs', 'dist/yori.cjs.map'].sort(),
+    );
     assert.deepEqual(packageJson.publishConfig, { access: 'public' });
     assert.equal(packageJson.dependencies, undefined);
     assert.equal(packageJson.devDependencies.esbuild, '0.28.2');
