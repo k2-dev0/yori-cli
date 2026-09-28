@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
-import { readFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import {
   DEFAULT_COLLECTOR_BUNDLE,
@@ -11,6 +11,7 @@ import {
   assertCollectorFailure,
   collectorCommandsFor,
   collectorConfigPath,
+  collectorInstallRoot,
   collectorVersionDir,
   hookCommandFor,
   hookPath,
@@ -28,11 +29,13 @@ import {
   type CollectorFixture,
   type CollectorRun,
 } from './collector-support.js';
+import { REPO_ROOT } from './support.js';
 
 // collector:update / doctor / uninstallの契約。installで作った隔離環境だけを使う。
 const V2_VERSION = '9.9.9-test2';
 const V3_VERSION = '9.9.9-test3';
-const V2_BUNDLE = 'console.log("collector-fixture-v2");\n';
+const V2_BUNDLE =
+  "if (!process.env.YORI_COLLECTOR_TOKEN) { process.exit(3); }\nconsole.log(\"collector-fixture-v2\");\n";
 const AGENTS = ['codex', 'claude_code'] as const;
 
 async function readText(filePath: string): Promise<string> {
@@ -109,6 +112,15 @@ describe('collector:update', () => {
       assert.ok(launched.stdout.includes('collector-fixture-v2'), `launcherが新versionを実行していない: ${launched.stdout}`);
       assert.equal(await readText(collectorConfigPath(fixture)), configBefore);
       assert.equal(await keychainToken(fixture), DEFAULT_TOKEN);
+
+      // update後のinstall.jsonは新collector versionとchecksumへ切り替わり、初回setup policy_versionを保持する。
+      const installState = JSON.parse(await readText(path.join(collectorInstallRoot(fixture), 'install.json'))) as Record<string, unknown>;
+      const packageJson = JSON.parse(await readText(path.join(REPO_ROOT, 'package.json'))) as { version: string };
+      assert.deepEqual(Object.keys(installState).sort(), ['checksum', 'collector_version', 'installer_version', 'policy_version']);
+      assert.equal(installState.installer_version, packageJson.version);
+      assert.equal(installState.collector_version, V2_VERSION);
+      assert.equal(installState.checksum, sha256Hex(V2_BUNDLE));
+      assert.equal(installState.policy_version, 3);
     });
   });
 
@@ -148,11 +160,20 @@ describe('collector:doctor', () => {
       const before = await snapshot(fixture.home);
       await writeApiSpec(fixture, [DEFAULT_SETUP_RESPONSE]);
       const run = await runRootCli(fixture, ['collector:doctor']);
-      parseCollectorSuccess(run);
-      for (const output of [run.stdout, run.stderr]) {
-        assert.ok(!output.includes(DEFAULT_TOKEN), 'doctor出力へtokenが出ている');
-        assert.ok(!output.includes('Bearer'), 'doctor出力へAuthorizationが出ている');
+      const output = parseCollectorSuccess(run);
+      assert.equal(output.policy_version, 3, `doctorがcurrent policy versionを返していない: ${run.stdout}`);
+      assert.equal(typeof output.version, 'string');
+      const checks = output.checks as Record<string, boolean>;
+      for (const name of ['installed', 'artifact', 'launcher', 'config', 'hooks', 'keychain', 'setup', 'platform', 'git', 'permissions']) {
+        assert.equal(checks[name], true, `doctor check ${name} がtrueではない: ${run.stdout}`);
       }
+      for (const text of [run.stdout, run.stderr]) {
+        assert.ok(!text.includes(DEFAULT_TOKEN), 'doctor出力へtokenが出ている');
+        assert.ok(!text.includes('Bearer'), 'doctor出力へAuthorizationが出ている');
+        assert.ok(!text.includes('fixture-rule'), 'doctor出力へruleが出ている');
+      }
+      // doctorはKeychain promptをせず、状態も変更しない。
+      assert.equal((await readSecurityCalls(fixture)).filter((args) => args[0] === 'add-generic-password').length, 0);
       assert.deepEqual(await snapshot(fixture.home), before, 'doctorが状態を変更している');
     });
   });
@@ -162,6 +183,10 @@ describe('collector:uninstall', () => {
   it('所有hook entryだけを削除し、Keychainと無関係設定を保持する', async () => {
     await withCollectorFixture(async (fixture) => {
       await installV1(fixture);
+      // state directoryはuninstall対象外であることをmarkerで確認する。
+      const stateMarker = path.join(fixture.home, '.yori-collector', 'keep');
+      await mkdir(path.dirname(stateMarker), { recursive: true });
+      await writeFile(stateMarker, 'state', 'utf8');
       const run = await runRootCli(fixture, ['collector:uninstall']);
       assertSuccess(run);
       assert.ok(!run.stdout.includes(DEFAULT_TOKEN));
@@ -175,6 +200,10 @@ describe('collector:uninstall', () => {
       }
 
       assert.equal(await keychainToken(fixture), DEFAULT_TOKEN, 'uninstallでKeychain tokenを削除している');
+      // config・install rootは削除し、state directoryは保持する。
+      assert.equal(existsSync(collectorConfigPath(fixture)), false, 'uninstallでconfigを残している');
+      assert.equal(existsSync(collectorInstallRoot(fixture)), false, 'uninstallでinstall rootを残している');
+      assert.equal(await readText(stateMarker), 'state', 'uninstallでstate directoryを削除している');
 
       // Keychainを保持するため、再installはpromptなしで成功する。
       await writeApiSpec(fixture, [DEFAULT_SETUP_RESPONSE]);
