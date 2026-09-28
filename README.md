@@ -11,7 +11,7 @@ yori の会社・社員・案件・案件メンバー・認証トークンを初
 
 `yori-cli` をpublic npm registryへpublishし、レビュー済みの固定versionをnpxから実行する。`latest`の無条件利用ではなく、本番では承認済みversionを指定する。Compose運用ではyori本体と同じ `/etc/yori/yori.env` とinternal Docker networkを使う。
 
-固定DB資格情報、host公開DB port、完成済みDB URLの二重管理は使わない。配置、migration、read-only bootstrap mount、token取扱いは [deployment手順](deployment/README.md) を正本とする。
+固定DB資格情報、host公開DB port、完成済みDB URLの二重管理は使わない。公開package単体で再現できる安全なnpx手順を下に記載する。source配置、migration、token取扱いの詳細はrepositoryの `deployment/README.md` を使う。
 
 ## 実行コマンド
 
@@ -27,7 +27,47 @@ npm registryの固定versionをnpxで実行:
 npx --yes --package=yori-cli@<reviewed-version> yori inspect <company-uuid>
 ```
 
-`DATABASE_URL` はこのcommand行に書かず、保護された実行環境から渡す。本番DBはhost port非公開のため、npxもyoriのinternal Docker networkへ参加する一時container内で実行する。実行例は [deployment手順](deployment/README.md) を使う。
+`DATABASE_URL` はこのcommand行に書かず、保護された実行環境から渡す。本番DBはhost port非公開のため、npxもyoriのinternal Docker networkへ参加する一時container内で実行する。
+
+### 公開packageだけで本番npx実行
+
+次を `/etc/yori/yori-cli-npx.yaml` へ保存する。Composeが共通env fileをdotenvとしてparseし、containerへは構成済み `DATABASE_URL` とnpm log設定だけを渡す。JevやVoyage等のAPI秘密は渡さない。
+
+```yaml
+name: yori-cli-published
+services:
+  cli:
+    image: node:24.21.0-bookworm-slim@sha256:0e0ff40c39bc087845bfb27465a0df4ea419520094bc35842ff83dd8cbe6f9b6
+    profiles: [tools]
+    networks: [yori]
+    environment:
+      DATABASE_URL: postgres://${YORI_POSTGRES_USER:?required}:${YORI_POSTGRES_PASSWORD:?required}@db:5432/${YORI_POSTGRES_DB:?required}
+      NPM_CONFIG_LOGLEVEL: error
+    entrypoint:
+      - sh
+      - -eu
+      - -c
+      - |
+        version="$1"
+        shift
+        exec npx --yes --package="yori-cli@$${version}" yori "$$@"
+      - --
+networks:
+  yori:
+    name: ${YORI_ADMIN_NETWORK:-yori_default}
+    external: true
+```
+
+yori本体のmigration完了後、承認済みversionを固定して実行する。`bootstrap.json` はrepository外の管理者限定fileとし、read-only mountする。
+
+```sh
+docker compose --env-file /etc/yori/yori.env -f /etc/yori/yori-cli-npx.yaml --profile tools config --quiet
+docker compose --env-file /etc/yori/yori.env -f /etc/yori/yori-cli-npx.yaml --profile tools run --rm \
+  --volume /etc/yori/bootstrap.json:/input/bootstrap.json:ro \
+  cli <reviewed-version> bootstrap /input/bootstrap.json
+```
+
+`inspect`は末尾を `<reviewed-version> inspect <company-uuid>` へ置き換える。生tokenを返す `bootstrap` / `token:issue` は管理者の対話端末で実行し、`tee`、redirect、CI、共有session recorderへ出力しない。
 
 `DATABASE_URL` はargvで受け取らない。未設定・空なら `invalid_admin_config` で終了する。入力はすべてJSON fileで渡す。本番では完成済みURLを直接管理せず、Composeが `YORI_POSTGRES_USER`、`YORI_POSTGRES_PASSWORD`、`YORI_POSTGRES_DB` から構成する。
 
