@@ -1,7 +1,7 @@
 import { after, before, beforeEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdtemp, rm, symlink } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createPool } from '../../db/pool.js';
@@ -43,10 +43,17 @@ async function runThroughSymlink(linkPath: string, args: string[]): Promise<Admi
 }
 
 describe('bin entrypoint', () => {
+  it('公開packageの実行コマンドをyoriだけに固定する', async () => {
+    const packageJson = JSON.parse(await readFile(path.join(REPO_ROOT, 'package.json'), 'utf8'));
+    assert.deepEqual(packageJson.bin, { yori: 'dist/admin/cli.js' });
+    assert.equal(packageJson.scripts.cli, 'tsx src/admin/cli.ts');
+    assert.equal(packageJson.scripts.admin, undefined);
+  });
+
   it('symlink経由で起動してもCLIとして実行される', async () => {
-    const directory = await mkdtemp(path.join(tmpdir(), 'yori-admin-bin-'));
+    const directory = await mkdtemp(path.join(tmpdir(), 'yori-cli-bin-'));
     try {
-      const linkPath = path.join(directory, 'yori-admin');
+      const linkPath = path.join(directory, 'yori');
       await symlink(path.join(REPO_ROOT, 'src', 'admin', 'cli.ts'), linkPath);
       const run = await withInputFile('company.json', { name: 'bin-entry' }, (filePath) =>
         runThroughSymlink(linkPath, ['company:create', filePath]),
@@ -61,9 +68,9 @@ describe('bin entrypoint', () => {
   });
 
   it('symlink経由の失敗も固定codeだけをstderrへ出す', async () => {
-    const directory = await mkdtemp(path.join(tmpdir(), 'yori-admin-bin-'));
+    const directory = await mkdtemp(path.join(tmpdir(), 'yori-cli-bin-'));
     try {
-      const linkPath = path.join(directory, 'yori-admin');
+      const linkPath = path.join(directory, 'yori');
       await symlink(path.join(REPO_ROOT, 'src', 'admin', 'cli.ts'), linkPath);
       const run = await runThroughSymlink(linkPath, []);
       assert.equal(run.code, 1);
