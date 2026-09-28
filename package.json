@@ -12,7 +12,9 @@
   },
   "files": [
     "dist/yori.cjs",
-    "dist/yori.cjs.map"
+    "dist/yori.cjs.map",
+    "dist/collector/yori-collector.mjs",
+    "dist/collector/collector-manifest.json"
   ],
   "engines": {
     "node": ">=24"
@@ -23,7 +25,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "lint": "eslint .",
     "build": "tsc -p tsconfig.build.json",
-    "postbuild": "esbuild src/admin/bin.ts --bundle --platform=node --format=cjs --target=node24 --sourcemap --log-override:empty-import-meta=silent --outfile=dist/yori.cjs",
+    "postbuild": "esbuild src/admin/bin.ts --bundle --platform=node --format=cjs --target=node24 --sourcemap --log-override:empty-import-meta=silent --outfile=dist/yori.cjs && node deployment/copy-collector.mjs",
     "prepack": "npm run build",
     "yori": "tsx src/admin/cli.ts"
   },
