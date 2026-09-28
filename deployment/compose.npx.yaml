@@ -1,0 +1,33 @@
+# public npmの固定yori-cli versionをyori本体のinternal network上で実行する。
+# --env-fileはComposeだけが読み、containerへは構成済みDATABASE_URL以外の本番秘密を渡さない。
+name: yori-cli-published
+
+services:
+  cli:
+    image: node:24.21.0-bookworm-slim@sha256:0e0ff40c39bc087845bfb27465a0df4ea419520094bc35842ff83dd8cbe6f9b6
+    profiles:
+      - tools
+    networks:
+      - yori
+    environment:
+      DATABASE_URL: postgres://${YORI_POSTGRES_USER:?required}:${YORI_POSTGRES_PASSWORD:?required}@db:5432/${YORI_POSTGRES_DB:?required}
+      NPM_CONFIG_LOGLEVEL: error
+    entrypoint:
+      - sh
+      - -eu
+      - -c
+      - |
+        version="$1"
+        shift
+        exec npx --yes --package="yori-cli@$${version}" yori "$$@"
+      - --
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  yori:
+    name: ${YORI_ADMIN_NETWORK:-yori_default}
+    external: true
