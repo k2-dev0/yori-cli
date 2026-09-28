@@ -35,9 +35,9 @@ sudo chmod 600 /etc/yori/yori.env
 
 現在のURL組立契約は値をpercent-encodeしない。DB資格情報にはURL予約文字を使わないか、yori本体と同じ事前encode済み値を設定する。
 
-## 2. private repositoryから配置する
+## 2. npm releaseとserver配置
 
-試運転ではnpm publishを使わない。配置先は次で固定する。
+`yori-cli` はpublic npm registryへpublishし、npxの利用者は承認済みversionを固定する。本番Composeは `deployment/compose.yaml` を使うため、serverには対応するreview済みtag / commitのsourceも配置する。source cloneはnpm releaseの代替ではない。配置先は次で固定する。
 
 ```text
 /srv/yori
@@ -47,11 +47,13 @@ sudo chmod 600 /etc/yori/yori.env
 /etc/yori/provider-approvals/
 ```
 
-1. yoriとyori-cliのprivate repositoryごとに別のDeploy Keyを作る。
-2. GitHub側では両方ともread-onlyで登録する。write accessを有効にしない。
-3. serverへ個人GitHub鍵を置かず、2つのDeploy Keyを共有しない。
-4. `/srv/yori-cli` へclone後、branch先端ではなくレビュー済みcommit SHAまたはrelease tagをcheckoutする。
-5. 更新前のSHAを記録し、`git pull` で無審査のbranch先端へ進めない。
+1. review済みcommitからversion / tagを固定し、testとpackage dry-run後にpublic npmへpublishする。
+2. `npm view yori-cli@<version> dist.integrity` で公開artifactを確認する。
+3. yoriとyori-cliのprivate repositoryごとに別のDeploy Keyを作る。
+4. GitHub側では両方ともread-onlyで登録する。write accessを有効にしない。
+5. serverへ個人GitHub鍵を置かず、2つのDeploy Keyを共有しない。
+6. `/srv/yori-cli` へclone後、npmで公開したversionと同じrelease tag / commit SHAをcheckoutする。
+7. 更新前のSHAを記録し、`git pull` で無審査のbranch先端へ進めない。
 
 ```sh
 cd /srv/yori-cli
@@ -61,7 +63,7 @@ git checkout --detach <reviewed-commit-sha>
 git rev-parse HEAD
 ```
 
-clone URLとDeploy Keyの選択はserverのSSH configで管理する。秘密鍵、review済みSHA、実秘密をrepository、image、Compose fileへ埋め込まない。
+clone URLとDeploy Keyの選択はserverのSSH configで管理する。秘密鍵、実秘密をrepository、npm package、image、Compose fileへ埋め込まない。
 
 ## 3. migration後にbootstrapする
 
