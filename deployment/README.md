@@ -38,7 +38,7 @@ sudo chmod 600 /etc/yori/yori.env
 
 ## 2. npm releaseとserver配置
 
-`yori-cli` はpublic npm registryへpublishし、npxの利用者は承認済みversionを固定する。本番Composeは `deployment/compose.yaml` を使うため、serverには対応するreview済みtag / commitのsourceも配置する。source cloneはnpm releaseの代替ではない。配置先は次で固定する。
+`yori-cli` はpublic npm registryへpublishし、npxの利用者は承認済みversionを固定する。正式のnpx実行は `deployment/compose.npx.yaml` を使う。source版Composeとintegration smokeも管理するため、serverには対応するreview済みtag / commitを配置する。source cloneはnpm releaseの代替ではない。配置先は次で固定する。
 
 ```text
 /srv/yori
