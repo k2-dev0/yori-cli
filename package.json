@@ -8,10 +8,11 @@
     "access": "public"
   },
   "bin": {
-    "yori": "dist/admin/cli.js"
+    "yori": "dist/yori.cjs"
   },
   "files": [
-    "dist"
+    "dist/yori.cjs",
+    "dist/yori.cjs.map"
   ],
   "engines": {
     "node": ">=24"
@@ -22,20 +23,20 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "lint": "eslint .",
     "build": "tsc -p tsconfig.build.json",
+    "postbuild": "esbuild src/admin/bin.ts --bundle --platform=node --format=cjs --target=node24 --sourcemap --log-override:empty-import-meta=silent --outfile=dist/yori.cjs",
     "prepack": "npm run build",
     "yori": "tsx src/admin/cli.ts"
-  },
-  "dependencies": {
-    "pg": "8.23.0",
-    "uuid": "13.0.2",
-    "zod": "4.6.5"
   },
   "devDependencies": {
     "@types/node": "^24.13.6",
     "@types/pg": "^8.23.1",
+    "esbuild": "0.28.2",
     "eslint": "^9.39.5",
+    "pg": "8.23.0",
     "tsx": "^4.23.15",
     "typescript": "^5.9.3",
-    "typescript-eslint": "^8.70.0"
+    "typescript-eslint": "^8.70.0",
+    "uuid": "13.0.2",
+    "zod": "4.6.5"
   }
 }
