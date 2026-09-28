@@ -72,6 +72,7 @@ npm run build
 ## 配布
 
 public npm registryの `yori-cli` を正式配布先とする。releaseはレビュー済みcommitからversionを固定し、test、typecheck、lint、build、`npm pack --dry-run`の成功後に行う。
+公開packageのnpx実行で依存解決結果が後日変わらないよう、runtime dependenciesは完全versionで固定する。依存更新は別commitでレビューし、新しいpackage versionとしてreleaseする。
 
 ```sh
 npm publish --access public
