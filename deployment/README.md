@@ -31,6 +31,8 @@ sudo chown root:root /etc/yori/yori.env
 sudo chmod 600 /etc/yori/yori.env
 ```
 
+以降の本番コマンド例は、`sudo -i` で開始したrootの対話shell上で実行する前提である。これにより `0600` のenv fileとinput fileを読める。共有session recorderとshell traceは無効にする。
+
 現在のURL組立契約は値をpercent-encodeしない。DB資格情報にはURL予約文字を使わないか、yori本体と同じ事前encode済み値を設定する。
 
 ## 2. private repositoryから配置する
