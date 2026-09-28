@@ -71,4 +71,4 @@ npm run build
 
 試運転はprivate cloneを使い、npm publishを要件にしない。現在のpackageは `UNLICENSED` である。registry配布はlicense、公開範囲、package名所有、署名・provenance、versioning、publish権限、2FAを別途決定してから行う。
 
-package化した場合に含むのは `files: ["dist"]` と `package.json` だけで、binは `yori` → `dist/admin/cli.js` である。
+package化した場合に含むのは `README.md`、`files: ["dist"]` の対象、`package.json` で、binは `yori` → `dist/admin/cli.js` である。
