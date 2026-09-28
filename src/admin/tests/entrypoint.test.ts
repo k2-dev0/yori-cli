@@ -47,6 +47,7 @@ describe('bin entrypoint', () => {
     const packageJson = JSON.parse(await readFile(path.join(REPO_ROOT, 'package.json'), 'utf8'));
     assert.deepEqual(packageJson.bin, { yori: 'dist/admin/cli.js' });
     assert.deepEqual(packageJson.publishConfig, { access: 'public' });
+    assert.deepEqual(packageJson.dependencies, { pg: '8.23.0', uuid: '13.0.2', zod: '4.6.5' });
     assert.equal(packageJson.scripts.yori, 'tsx src/admin/cli.ts');
     assert.equal(packageJson.scripts.cli, undefined);
     assert.equal(packageJson.scripts.admin, undefined);
