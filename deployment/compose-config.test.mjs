@@ -64,6 +64,17 @@ describe('production compose contract', () => {
     assert.equal(config.networks.yori.external, true);
   });
 
+  it('network未指定時はyori_defaultだけへ参加する', () => {
+    const result = composeConfig(validEnvironment());
+    assert.equal(result.status, 0, `Compose configが失敗した: ${result.stderr}`);
+
+    const config = JSON.parse(result.stdout);
+    assert.deepEqual(Object.keys(config.services.cli.networks), ['yori']);
+    assert.deepEqual(Object.keys(config.networks), ['yori']);
+    assert.equal(config.networks.yori.name, 'yori_default');
+    assert.equal(config.networks.yori.external, true);
+  });
+
   it('固定DB URLと旧YORI_ADMIN_DATABASE_URLをproduction composeへ保持しない', async () => {
     const source = await readFile(COMPOSE_FILE, 'utf8');
     assert.ok(!source.includes('YORI_ADMIN_DATABASE_URL'));
