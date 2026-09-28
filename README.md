@@ -1,6 +1,29 @@
 # yori-cli
 
-`yori-cli` は、yoriで使う会社・社員・案件・案件メンバー・認証トークンを管理するためのCLIです。インストール後は `yori` コマンドで実行します。
+`yori-cli` は、yoriで使う会社・社員・案件・案件メンバー・認証トークンを管理するためのCLIです。インストール後は `yori` コマンドで実行します。管理者操作に加え、社員端末へ会話collectorを導入する `collector:*` を提供します。
+
+## 社員端末へのcollector導入（macOS）
+
+対象repositoryのrootで、引数なしで実行します。
+
+```sh
+npx yori-cli collector:install
+```
+
+- 動作環境はmacOS、Node.js 24以降、`git`。APIは既定で `https://yori-pilot.online`。
+- 初回だけKeychain登録の非表示promptが出ます。tokenはKeychainとcollector専用環境変数以外へ保存せず、config・hook・logへ出しません。
+- cwdの`git remote.origin.url`から対象repositoryをcanonical化し、`POST /v1/collector/setup`で案件とcurrent伏せ字policyを照合します。
+- `~/.codex/hooks.json`と`~/.claude/settings.json`の存在するfile双方へ、`UserPromptSubmit`（notify）と`Stop`（collect）のhookを追加します。どちらも無い場合は`agent_not_found`で終了し、何も変更しません。
+- hookは固定のlocal artifact（`~/.local/share/yori/collector/versions/<version>/`）をstable launcher経由で呼び、npxやlatestへ依存しません。
+- 設定は`~/.yori-collector.json`、stateは`~/.yori-collector`、token環境変数は`YORI_COLLECTOR_TOKEN`。
+
+継続運用:
+
+| コマンド | 用途 |
+|---|---|
+| `npx yori-cli collector:update` | 配布artifactをchecksum検証してから切り替え、旧versionを残す。Keychainとstateは変更しない |
+| `npx yori-cli collector:doctor` | 秘密を含まない診断（install状態、Keychain、setup APIのcurrent policy version、権限）を表示し、状態を変更しない |
+| `npx yori-cli collector:uninstall` | 追加したhook・config・install rootだけを削除する。Keychainと`~/.yori-collector`は保持し、再installでpromptは出ない |
 
 ## 実行方法
 
@@ -34,6 +57,10 @@ DATABASE_URL='<database-url>' npm run --silent yori -- <command> [argument]
 | `token:issue <file.json>` | 指定した社員の認証トークンを発行する |
 | `token:revoke <file.json>` | 認証トークンを失効させる |
 | `inspect <company-uuid>` | 指定した会社の社員、案件、案件メンバー、認証トークンを表示する |
+| `collector:install` | 社員端末へcollectorを導入する（`DATABASE_URL`不要） |
+| `collector:update` | collector artifactを検証して切り替える（`DATABASE_URL`不要） |
+| `collector:doctor` | collector導入状態を秘密なしで診断する（`DATABASE_URL`不要） |
+| `collector:uninstall` | collectorの所有entry・config・install rootを削除する（`DATABASE_URL`不要） |
 
 ## コマンドごとの入出力
 
