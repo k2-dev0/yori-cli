@@ -14,13 +14,33 @@ export const ADMIN_ERROR_CODES = [
   'token_not_found',
   'company_scope_mismatch',
   'repository_conflict',
+  'repository_not_found',
   'member_already_exists',
   'member_not_found',
   'token_already_revoked',
+  'redaction_policy_conflict',
+  'redaction_policy_not_found',
+  'agent_not_found',
+  'collector_already_installed',
+  'collector_artifact_invalid',
+  'collector_config_invalid',
+  'collector_hook_conflict',
+  'collector_hook_error',
+  'collector_hook_invalid',
+  'collector_install_error',
+  'collector_internal_error',
+  'collector_invalid_request',
+  'collector_keychain_error',
+  'collector_not_installed',
+  'collector_repository_not_found',
+  'collector_rollback_failed',
+  'collector_unauthorized',
+  'unsupported_platform',
   'internal_error',
 ] as const;
 
 export type AdminErrorCode = (typeof ADMIN_ERROR_CODES)[number];
+
 
 // 上限はyori本体の契約に合わせる。repositoryはAPI・collectorと同じUTF-8 1024バイト (src/api/contract.ts:6)。
 export const MAX_SOURCE_IDENTIFIER_BYTES = 1024;
@@ -108,6 +128,22 @@ export const bootstrapInputSchema = z
     });
   });
 
+// custom伏せ字ruleの上限はyori migration 0010・API境界と同じ。内容検証はservice側で行う。
+export const MAX_CUSTOM_REDACTION_RULES = 100;
+export const MAX_CUSTOM_REDACTION_LITERAL_CODE_POINTS = 512;
+
+export const redactionReplaceInputSchema = z.strictObject({
+  company_id: uuid,
+  expected_version: z.number().int().min(0),
+  rules: z.array(z.string()).max(MAX_CUSTOM_REDACTION_RULES),
+});
+
+export const repositoryInputSchema = z.strictObject({
+  company_id: uuid,
+  project_id: uuid,
+  repository,
+});
+
 export const companyCreateInputSchema = z.strictObject({ name: companyName });
 export const employeeCreateInputSchema = z.strictObject({ company_id: uuid, display_name: displayName });
 export const projectCreateInputSchema = z.strictObject({ company_id: uuid, repository });
@@ -116,6 +152,8 @@ export const tokenIssueInputSchema = z.strictObject({ company_id: uuid, employee
 export const tokenRevokeInputSchema = z.strictObject({ company_id: uuid, token_id: uuid });
 
 export type BootstrapInput = z.infer<typeof bootstrapInputSchema>;
+export type RedactionReplaceInput = z.infer<typeof redactionReplaceInputSchema>;
+export type RepositoryInput = z.infer<typeof repositoryInputSchema>;
 export type CompanyCreateInput = z.infer<typeof companyCreateInputSchema>;
 export type EmployeeCreateInput = z.infer<typeof employeeCreateInputSchema>;
 export type ProjectCreateInput = z.infer<typeof projectCreateInputSchema>;
@@ -216,6 +254,30 @@ export interface TokenIssueOutput {
 export interface TokenRevokeOutput {
   status: 'revoked';
   token_id: string;
+}
+
+export interface RedactionReplaceOutput {
+  status: 'replaced';
+  company_id: string;
+  version: number;
+}
+
+// listはrulesとversionだけを返し、literal以外の内部情報を出さない。
+export interface RedactionListOutput {
+  version: number;
+  rules: string[];
+}
+
+export interface RepositoryAddOutput {
+  status: 'created';
+  project_id: string;
+  repository_identifier: string;
+}
+
+export interface RepositoryRemoveOutput {
+  status: 'removed';
+  project_id: string;
+  repository_identifier: string;
 }
 
 export type AdminResult<T> = { ok: true; value: T } | { ok: false; code: AdminErrorCode };
