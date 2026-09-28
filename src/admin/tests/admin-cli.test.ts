@@ -473,6 +473,26 @@ describe('異常系', () => {
     expectFail(await runWithFile('company:create', 'company.json', { name: 'example' }, { DATABASE_URL: undefined }), 'invalid_admin_config');
   });
 
+  it('0001 migration markerがないDBを成功扱いしない', async () => {
+    await pool.query("DELETE FROM schema_migrations WHERE version = '0001_init.sql'");
+    try {
+      const bootstrap = await withInputFile('bootstrap.json', bootstrapInput(), (filePath) => runAdmin(['bootstrap', filePath]));
+      expectFail(bootstrap, 'internal_error');
+      assert.equal(await countRows(pool, 'companies'), 0, 'migration未適用DBをbootstrapが更新した');
+
+      const inspect = await runAdmin(['inspect', companyMissingUuid]);
+      expectFail(inspect, 'internal_error');
+      for (const output of [bootstrap.stdout, bootstrap.stderr, inspect.stdout, inspect.stderr]) {
+        assert.ok(!output.includes('schema_migrations'));
+        assert.ok(!output.includes('0001_init.sql'));
+        assert.ok(!output.includes('DATABASE_URL'));
+        assert.ok(!output.includes('postgres://'));
+      }
+    } finally {
+      await pool.query("INSERT INTO schema_migrations (version) VALUES ('0001_init.sql') ON CONFLICT DO NOTHING");
+    }
+  });
+
   it('空文字・NUL・単独surrogate・repository上限超過を拒否する', async () => {
     const companyId = await createCompany();
     const cases: [string, string, unknown][] = [
