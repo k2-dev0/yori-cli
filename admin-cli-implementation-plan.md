@@ -65,7 +65,7 @@ DB migrationは追加しない。既存の`companies`、`employees`、`projects`
 
 ## 4. 公開コマンド契約
 
-公開binは`yori <command>`、repository内のentry pointは`npm run cli -- <command>`とする。Composeでは次の形で実行できるようにする。
+公開binは`yori <command>`、repository内のentry pointは`npm run yori -- <command>`とする。Composeでは次の形で実行できるようにする。
 
 ```sh
 docker compose -p yori -f deployment/compose.yaml --profile tools run --rm cli <command>
@@ -131,7 +131,7 @@ docker compose -p yori -f deployment/compose.yaml --profile tools run --rm cli <
 - 作成結果は生成したIDと正規化済みの非秘密情報を返す。
 - `token:issue`と`bootstrap`のtoken発行結果だけ、`token_id`と生の`token`を返す。
 - `inspect`はtoken ID、社員ID、作成日時、失効日時だけを返し、生tokenとtoken hashを返さない。
-- npm bannerが混ざらないよう、運用例では`npm run --silent cli -- ...`を使用する。
+- npm bannerが混ざらないよう、運用例では`npm run --silent yori -- ...`を使用する。
 
 `token:issue`の成功出力例:
 
@@ -202,7 +202,7 @@ internal_error
 | `src/admin/cli.ts` | argv、file読取、`DATABASE_URL`、stdout/stderr、終了コード |
 | `src/admin/tests/admin-cli.test.ts` | 実PostgreSQLによるCLI・serviceの正常系、異常系、競合検証 |
 | `docs/admin.md` | JSON例、ホスト／Compose実行、token紛失・失効、固定code |
-| `package.json` | `yori` binと`cli` script追加 |
+| `package.json` | `yori` binと`yori` script追加 |
 | `deployment/compose.yaml` | tools profileの`cli` service追加 |
 | `deployment/README.md` | migration後のbootstrap、通常管理コマンドへの導線 |
 
@@ -215,7 +215,7 @@ production codeから`src/db/tests/fixtures.ts`をimportしない。token生成�
 3. `bootstrap`のadvisory lock、全体transaction、ref解決を実装する。
 4. `src/admin/cli.ts`へコマンドdispatch、JSON file読取、出力境界を実装する。
 5. 実PostgreSQLテストを追加する。
-6. `package.json`へ`yori` binと`cli` scriptを追加する。
+6. `package.json`へ`yori` binと`yori` scriptを追加する。
 7. Compose tools profileへ`cli` serviceを追加する。
 8. `docs/admin.md`と`deployment/README.md`へ運用手順を追加する。
 9. `npm test`、`npm run typecheck`、`npm run lint`、`npm run build`を実行する。
