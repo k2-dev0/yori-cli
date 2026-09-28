@@ -1,12 +1,13 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
-import { chmod, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import {
   DEFAULT_API_URL,
   DEFAULT_COLLECTOR_BUNDLE,
   DEFAULT_COLLECTOR_VERSION,
+  DEFAULT_SETUP_RESPONSE,
   DEFAULT_TOKEN,
   HOOK_FILES,
   KEYCHAIN_SERVICE,
@@ -17,6 +18,7 @@ import {
   collectorInstallRoot,
   collectorVersionDir,
   commandPathsUnder,
+  hookCommandFor,
   hookPath,
   keychainToken,
   listFilesRecursively,
@@ -33,6 +35,7 @@ import {
   writeHookJson,
   type CollectorAgent,
 } from './collector-support.js';
+import { REPO_ROOT } from './support.js';
 
 // root CLI経由のcollector:install契約。実HOME・実Keychain・実API・実gitへは触れない。
 // 未実装の間はunknown commandとしてinvalid_argumentsへ落ちるため、各testがbehaviorでRedになる。
@@ -134,9 +137,20 @@ describe('collector:install', () => {
         );
         for (const command of commands) {
           assertUsesStableLauncher(fixture, command, agent);
+          assert.ok(command.includes(process.execPath), `${agent}のhook commandがprocess.execPathを使っていない: ${command}`);
         }
         assert.ok(JSON.stringify(hookJson).includes('echo unrelated-prompt'), `${agent}の既存hookを消している`);
         assert.ok(JSON.stringify(hookJson).includes('echo unrelated-stop'), `${agent}の既存hookを消している`);
+
+        // notify entryだけにasync:trueを付け、collect entryには付けない。
+        const hookSections = (hookJson as { hooks?: Record<string, { hooks?: { command?: unknown; async?: unknown }[] }[]> }).hooks ?? {};
+        const flattenHooks = (section: string) => (hookSections[section] ?? []).flatMap((entry) => entry.hooks ?? []);
+        const notifyEntry = flattenHooks('UserPromptSubmit').find((hook) => typeof hook.command === 'string' && hook.command.includes('notify'));
+        const collectEntry = flattenHooks('Stop').find(
+          (hook) => typeof hook.command === 'string' && hook.command.includes('collect') && !hook.command.includes('notify'),
+        );
+        assert.equal(notifyEntry?.async, true, `${agent}のnotify entryがasync:trueではない`);
+        assert.ok(collectEntry !== undefined && !('async' in collectEntry), `${agent}のcollect entryにasyncが付いている`);
       }
 
       // stable launcherは現在のversionを実行し、npx/latestへ依存しない。
@@ -147,6 +161,32 @@ describe('collector:install', () => {
       const launched = runShellCommand(fixture, collectCommand);
       assert.equal(launched.status, 0, `launcher実行が失敗した: ${launched.stderr}`);
       assert.ok(launched.stdout.includes('collector-fixture-v1'), `launcherが現在versionを実行していない: ${launched.stdout}`);
+      // launcherはconfig.api_urlのKeychain tokenを内部captureし、子collector envへだけ渡す。
+      assert.ok(!launched.stdout.includes(DEFAULT_TOKEN), 'launcher stdoutへtokenが出ている');
+      assert.ok(!launched.stderr.includes(DEFAULT_TOKEN), 'launcher stderrへtokenが出ている');
+      const launcherFindCalls = (await readSecurityCalls(fixture)).filter((args) => args[0] === 'find-generic-password');
+      assert.ok(launcherFindCalls.length >= 2, `launcherがsecurity findを呼んでいない: ${JSON.stringify(launcherFindCalls)}`);
+      for (const args of launcherFindCalls) {
+        assert.equal(args[args.indexOf('-s') + 1], KEYCHAIN_SERVICE);
+        assert.equal(args[args.indexOf('-a') + 1], DEFAULT_API_URL);
+        assert.equal(args.at(-1), '-w');
+        assert.ok(!args.includes(DEFAULT_TOKEN), `launcher argvへtokenが出ている: ${JSON.stringify(args)}`);
+      }
+      // install.jsonはversion情報だけを持ち、token・rules・override pathを含まない。
+      const installStateText = await readText(path.join(collectorInstallRoot(fixture), 'install.json'));
+      const installState = JSON.parse(installStateText) as Record<string, unknown>;
+      const packageJson = JSON.parse(await readText(path.join(REPO_ROOT, 'package.json'))) as { version: string };
+      assert.deepEqual(
+        Object.keys(installState).sort(),
+        ['checksum', 'collector_version', 'installer_version', 'policy_version'],
+        `install.jsonのfieldが違う: ${installStateText}`,
+      );
+      assert.equal(installState.installer_version, packageJson.version);
+      assert.equal(installState.collector_version, DEFAULT_COLLECTOR_VERSION);
+      assert.equal(installState.checksum, sha256Hex(DEFAULT_COLLECTOR_BUNDLE));
+      assert.equal(installState.policy_version, 3);
+      assert.ok(!installStateText.includes(DEFAULT_TOKEN), 'install.jsonへtokenが出ている');
+      assert.ok(!installStateText.includes(fixture.artifactDir), 'install.jsonへoverride pathが出ている');
 
       // tokenはconfig・hooks・配置物・stdout/stderrへ残さない。
       assert.deepEqual(await filesContaining(fixture.home, DEFAULT_TOKEN), []);
@@ -194,6 +234,7 @@ describe('collector:install', () => {
   it('token登録済みならpromptせず、再installしても冪等にする', async () => {
     await withCollectorFixture(async (fixture) => {
       await prepareCollectorInstall(fixture, { tokenRegistered: true });
+      await writeApiSpec(fixture, [DEFAULT_SETUP_RESPONSE, DEFAULT_SETUP_RESPONSE]);
       const first = await runRootCli(fixture, ['collector:install']);
       parseCollectorSuccess(first);
       const configAfterFirst = await readText(collectorConfigPath(fixture));
@@ -208,6 +249,7 @@ describe('collector:install', () => {
 
       const addCalls = (await readSecurityCalls(fixture)).filter((args) => args[0] === 'add-generic-password');
       assert.equal(addCalls.length, 0, `token登録済みなのにpromptしている: ${JSON.stringify(addCalls)}`);
+      assert.equal((await readApiRequests(fixture)).length, 2, '同version再installでsetup APIを省略している');
       assert.equal(await readText(collectorConfigPath(fixture)), configAfterFirst, '再installでconfigが変化した');
       for (const agent of ['codex', 'claude_code'] as const) {
         assert.equal(await readText(hookPath(fixture, agent)), hooksAfterFirst.get(agent), `${agent}のhookが冪等ではない`);
@@ -232,6 +274,13 @@ describe('collector:install', () => {
         assert.equal(existsSync(path.join(fixture.home, '.local')), false, `API失敗で配置を作成している (status=${status})`);
         assert.equal(await readText(hookPath(fixture, 'codex')), codexBefore, `API失敗でhookを変更している (status=${status})`);
         assert.equal(await readText(hookPath(fixture, 'claude_code')), claudeBefore, `API失敗でhookを変更している (status=${status})`);
+        // 既存Keychain itemは失敗時も削除しない。
+        assert.equal(
+          (await readSecurityCalls(fixture)).filter((args) => args[0] === 'delete-generic-password').length,
+          0,
+          `既存Keychain itemを削除している (status=${status})`,
+        );
+        assert.equal(await keychainToken(fixture), DEFAULT_TOKEN);
       });
     }
     assert.equal(codes.size, 4, `400/401/404/500が異なる固定codeになっていない: ${[...codes].join(' / ')}`);
@@ -299,6 +348,219 @@ describe('collector:install', () => {
       assert.equal(await readText(hookPath(fixture, 'claude_code')), claudeBefore);
       assert.equal(existsSync(collectorConfigPath(fixture)), false);
     });
+  });
+
+  it('Keychain itemが消えていれば再installでpromptしrepairする', async () => {
+    await withCollectorFixture(async (fixture) => {
+      await prepareCollectorInstall(fixture, { tokenRegistered: true });
+      parseCollectorSuccess(await runRootCli(fixture, ['collector:install']));
+      await rm(fixture.keychainPath, { force: true });
+      await writeApiSpec(fixture, [DEFAULT_SETUP_RESPONSE]);
+      const run = await runRootCli(fixture, ['collector:install'], { input: `${DEFAULT_TOKEN}\n` });
+      parseCollectorSuccess(run);
+      const addCalls = (await readSecurityCalls(fixture)).filter((args) => args[0] === 'add-generic-password');
+      assert.equal(addCalls.length, 1, `Keychain消失時にpromptしていない: ${JSON.stringify(addCalls)}`);
+      assert.equal(await keychainToken(fixture), DEFAULT_TOKEN);
+    });
+  });
+
+  it('異versionの再installは検証後切替し、旧versionを維持する', async () => {
+    await withCollectorFixture(async (fixture) => {
+      await prepareCollectorInstall(fixture, { tokenRegistered: true });
+      parseCollectorSuccess(await runRootCli(fixture, ['collector:install']));
+      const hookBefore = await Promise.all((['codex', 'claude_code'] as const).map((agent) => readText(hookPath(fixture, agent))));
+      const v2Version = '9.9.9-test2';
+      await writeCollectorArtifact(fixture, {
+        version: v2Version,
+        content: "if (!process.env.YORI_COLLECTOR_TOKEN) { process.exit(3); }\nconsole.log(\"collector-fixture-v2\");\n",
+      });
+      await writeApiSpec(fixture, [DEFAULT_SETUP_RESPONSE]);
+      const output = parseCollectorSuccess(await runRootCli(fixture, ['collector:install']));
+      assert.equal(output.version, v2Version, '異versionの再installが切替えていない');
+      assert.ok(existsSync(path.join(collectorVersionDir(fixture, DEFAULT_COLLECTOR_VERSION), 'yori-collector.mjs')), '旧versionを削除している');
+      const launched = runShellCommand(fixture, await hookCommandFor(fixture, 'codex', 'collect'));
+      assert.equal(launched.status, 0, `launcher実行が失敗した: ${launched.stderr}`);
+      assert.ok(launched.stdout.includes('collector-fixture-v2'), `launcherが新versionを実行していない: ${launched.stdout}`);
+      for (const [index, agent] of (['codex', 'claude_code'] as const).entries()) {
+        assert.equal(await readText(hookPath(fixture, agent)), hookBefore[index], 'installでhookを書き換えている');
+      }
+    });
+  });
+
+  it('api_urlはhttpsまたはloopback httpだけを許可し、失敗時に値を出さない', async () => {
+    const invalidUrls = [
+      'https://user:URL_SECRET_MARKER@yori-pilot.online',
+      'https://yori-pilot.online/?query=1',
+      'https://yori-pilot.online/#fragment',
+      'http://evil.example',
+      'file:///tmp/collector',
+    ];
+    for (const apiUrl of invalidUrls) {
+      await withCollectorFixture(async (fixture) => {
+        await prepareCollectorInstall(fixture, { tokenRegistered: true });
+        const configText = `${JSON.stringify({ api_url: apiUrl, token_env: 'YORI_COLLECTOR_TOKEN', state_dir: path.join(fixture.home, '.yori-collector') }, null, 2)}\n`;
+        await writeFile(collectorConfigPath(fixture), configText, 'utf8');
+        assert.equal(
+          assertCollectorFailure(await runRootCli(fixture, ['collector:install']), [DEFAULT_TOKEN, 'URL_SECRET_MARKER', 'evil.example']),
+          'admin: collector_config_invalid\n',
+        );
+        assert.equal(await readText(collectorConfigPath(fixture)), configText, 'invalid api_urlのconfigを書き換えている');
+        assert.deepEqual(await readApiRequests(fixture), []);
+        assert.equal(existsSync(collectorInstallRoot(fixture)), false);
+        assert.equal((await readSecurityCalls(fixture)).filter((args) => args[0] === 'add-generic-password').length, 0);
+      });
+    }
+  });
+
+  it('API transport errorをcollector_internal_errorへ縮退し、本文やtokenを出さない', async () => {
+    await withCollectorFixture(async (fixture) => {
+      await prepareCollectorInstall(fixture, { tokenRegistered: true });
+      await writeApiSpec(fixture, [{ status: 0, networkError: true }]);
+      const run = await runRootCli(fixture, ['collector:install']);
+      assert.equal(run.code, 1);
+      assert.equal(run.stdout, '');
+      assert.equal(run.stderr, 'admin: collector_internal_error\n');
+      assert.equal(existsSync(collectorConfigPath(fixture)), false);
+      assert.equal(existsSync(collectorInstallRoot(fixture)), false);
+    });
+  });
+
+  it('2つ目のhook writeが失敗したら全成果物をrollbackする', async () => {
+    await withCollectorFixture(async (fixture) => {
+      await prepareCollectorInstall(fixture, { tokenRegistered: true });
+      const codexBefore = await readText(hookPath(fixture, 'codex'));
+      const claudeBefore = await readText(hookPath(fixture, 'claude_code'));
+      const codexModeBefore = (await stat(hookPath(fixture, 'codex'))).mode & 0o777;
+      const claudeDir = path.dirname(hookPath(fixture, 'claude_code'));
+      await chmod(claudeDir, 0o500);
+      try {
+        const run = await runRootCli(fixture, ['collector:install']);
+        assertCollectorFailure(run, [DEFAULT_TOKEN]);
+        assert.equal(run.stderr, 'admin: collector_hook_error\n');
+        assert.equal(await readText(hookPath(fixture, 'codex')), codexBefore, 'rollbackでcodex hookを戻していない');
+        assert.equal((await stat(hookPath(fixture, 'codex'))).mode & 0o777, codexModeBefore, 'rollbackでhook modeが変わっている');
+        assert.equal(await readText(hookPath(fixture, 'claude_code')), claudeBefore, 'rollbackでclaude hookを変更している');
+        assert.equal(existsSync(collectorConfigPath(fixture)), false, 'rollbackでconfigを残している');
+        assert.equal(existsSync(collectorInstallRoot(fixture)), false, 'rollbackでinstall rootを残している');
+        assert.deepEqual(await filesContaining(fixture.home, DEFAULT_TOKEN), []);
+      } finally {
+        await chmod(claudeDir, 0o700);
+      }
+    });
+  });
+
+  it('spaceとquoteを含むHOMEでもhook commandを実行・冪等に扱う', async () => {
+    await withCollectorFixture(async (fixture) => {
+      fixture.home = path.join(fixture.root, "home with space and 'quote'");
+      await mkdir(fixture.home, { recursive: true });
+      await prepareCollectorInstall(fixture, { tokenRegistered: true });
+      parseCollectorSuccess(await runRootCli(fixture, ['collector:install']));
+      const hookAfterFirst = await readText(hookPath(fixture, 'codex'));
+      assert.ok(hookAfterFirst.includes('--source codex'));
+      const launched = runShellCommand(fixture, await hookCommandFor(fixture, 'codex', 'collect'));
+      assert.equal(launched.status, 0, `space/quote HOMEでlauncher実行が失敗した: ${launched.stderr}`);
+      assert.ok(launched.stdout.includes('collector-fixture-v1'), `markerが出ていない: ${launched.stdout}`);
+      await writeApiSpec(fixture, [DEFAULT_SETUP_RESPONSE]);
+      parseCollectorSuccess(await runRootCli(fixture, ['collector:install']));
+      assert.equal(await readText(hookPath(fixture, 'codex')), hookAfterFirst, 'space/quote HOMEでhookが冪等ではない');
+    });
+  });
+
+  it('hook commandはPATHのnodeではなくprocess.execPathの絶対pathでartifactを起動する', async () => {
+    await withCollectorFixture(async (fixture) => {
+      await prepareCollectorInstall(fixture, { tokenRegistered: true });
+      parseCollectorSuccess(await runRootCli(fixture, ['collector:install']));
+      const fakeDir = path.join(fixture.root, 'fake-node');
+      await mkdir(fakeDir, { recursive: true });
+      const fakeNode = path.join(fakeDir, 'node');
+      await writeFile(fakeNode, '#!/bin/sh\necho FAKE_NODE_INVOKED\nexit 42\n', 'utf8');
+      await chmod(fakeNode, 0o755);
+      const launched = runShellCommand(fixture, await hookCommandFor(fixture, 'codex', 'collect'), {
+        PATH: `${fakeDir}:${process.env.PATH ?? '/usr/bin:/bin'}`,
+      });
+      assert.equal(launched.status, 0, `PATHの偽nodeを起動した: ${launched.stderr}`);
+      assert.ok(!launched.stdout.includes('FAKE_NODE_INVOKED'), 'PATHのnodeを起動している');
+      assert.ok(launched.stdout.includes('collector-fixture-v1'), `実artifactが起動していない: ${launched.stdout}`);
+    });
+  });
+
+  it('tokenを新規作成したAPI 404失敗ではKeychain itemをrollbackする', async () => {
+    await withCollectorFixture(async (fixture) => {
+      await prepareCollectorInstall(fixture, { tokenRegistered: false });
+      await writeApiSpec(fixture, [{ status: 404, body: { error: 'not_found' } }]);
+      const run = await runRootCli(fixture, ['collector:install'], { input: `${DEFAULT_TOKEN}\n` });
+      assert.equal(run.code, 1);
+      assert.equal(run.stderr, 'admin: project_not_found\n');
+      assert.equal(await keychainToken(fixture), null, '新規作成したKeychain itemを残している');
+      const deleteCalls = (await readSecurityCalls(fixture)).filter((args) => args[0] === 'delete-generic-password');
+      assert.equal(deleteCalls.length, 1, `delete-generic-passwordを呼んでいない: ${JSON.stringify(deleteCalls)}`);
+      for (const args of deleteCalls) {
+        assert.equal(args[args.indexOf('-s') + 1], KEYCHAIN_SERVICE);
+        assert.equal(args[args.indexOf('-a') + 1], DEFAULT_API_URL);
+        assert.ok(!args.includes(DEFAULT_TOKEN), `delete argvへtokenが出ている: ${JSON.stringify(args)}`);
+      }
+    });
+  });
+
+  it('tokenを新規作成したhook write失敗でもKeychain itemをrollbackする', async () => {
+    await withCollectorFixture(async (fixture) => {
+      await prepareCollectorInstall(fixture, { tokenRegistered: false });
+      const codexBefore = await readText(hookPath(fixture, 'codex'));
+      const claudeDir = path.dirname(hookPath(fixture, 'claude_code'));
+      await chmod(claudeDir, 0o500);
+      try {
+        const run = await runRootCli(fixture, ['collector:install'], { input: `${DEFAULT_TOKEN}\n` });
+        assertCollectorFailure(run, [DEFAULT_TOKEN]);
+        assert.equal(run.stderr, 'admin: collector_hook_error\n');
+        assert.equal(await keychainToken(fixture), null, 'hook失敗時に新規Keychain itemを残している');
+        assert.equal(
+          (await readSecurityCalls(fixture)).filter((args) => args[0] === 'delete-generic-password').length,
+          1,
+          'hook失敗時にdelete-generic-passwordを呼んでいない',
+        );
+        assert.equal(await readText(hookPath(fixture, 'codex')), codexBefore);
+        assert.equal(existsSync(collectorConfigPath(fixture)), false);
+        assert.equal(existsSync(collectorInstallRoot(fixture)), false);
+      } finally {
+        await chmod(claudeDir, 0o700);
+      }
+    });
+  });
+
+  it('setup応答のpolicy rulesを0010契約で検証し、rule値を失敗出力へ出さない', async () => {
+    interface InvalidSetup {
+      rules: string[];
+      repository?: string;
+      project_id?: string;
+    }
+    const invalidSetups: InvalidSetup[] = [
+      { rules: [''] },
+      { rules: ['dup-rule-marker', 'dup-rule-marker'] },
+      { rules: ['[REDACTED:custom]'] },
+      { rules: ['[REDACTED:jwt]'] },
+      { rules: ['x'.repeat(513)] },
+      { rules: Array.from({ length: 101 }, (_, index) => `over-${index}`) },
+      { rules: ['ok-rule'], repository: 'github.com/example/other' },
+      { rules: ['ok-rule'], project_id: 'not-a-uuid' },
+    ];
+    for (const invalid of invalidSetups) {
+      await withCollectorFixture(async (fixture) => {
+        await prepareCollectorInstall(fixture, { tokenRegistered: true });
+        await writeApiSpec(fixture, [{
+          status: 200,
+          body: {
+            project_id: invalid.project_id ?? '01930000-0000-7000-8000-000000000001',
+            repository: invalid.repository ?? 'github.com/example/repo',
+            redaction_policy: { version: 1, rules: invalid.rules },
+          },
+        }]);
+        const run = await runRootCli(fixture, ['collector:install']);
+        assertCollectorFailure(run, [DEFAULT_TOKEN, 'dup-rule-marker', '[REDACTED:custom]', '[REDACTED:jwt]']);
+        assert.equal(run.stderr, 'admin: collector_internal_error\n');
+        assert.equal(existsSync(collectorConfigPath(fixture)), false);
+        assert.equal(existsSync(collectorInstallRoot(fixture)), false);
+      });
+    }
   });
 
   it('書き込み不能なHOMEでは無変更で失敗する', async () => {
