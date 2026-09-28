@@ -20,7 +20,7 @@
     "lint": "eslint .",
     "build": "tsc -p tsconfig.build.json",
     "prepack": "npm run build",
-    "cli": "tsx src/admin/cli.ts"
+    "yori": "tsx src/admin/cli.ts"
   },
   "dependencies": {
     "pg": "^8.23.0",
