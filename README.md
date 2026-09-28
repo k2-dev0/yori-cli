@@ -7,9 +7,9 @@ yori の会社・社員・案件・案件メンバー・認証トークンを初
 - 生の認証tokenは `bootstrap` / `token:issue` 成功時に1度だけstdoutへ出す。DBにはSHA-256だけを保存する。
 - 会社・社員・案件を物理削除するコマンドはない。破壊的操作は案件メンバー解除とtoken失効だけである。
 
-## 本番試運転
+## 配布と本番試運転
 
-npm publishは行わない。private repositoryを `/srv/yori-cli` へread-only Deploy Keyでcloneし、レビュー済みcommit SHAをcheckoutしてComposeの `cli` serviceから実行する。yori本体と同じ `/etc/yori/yori.env` を使い、同じinternal Docker network上のPostgreSQLへ接続する。
+`yori-cli` をpublic npm registryへpublishし、レビュー済みの固定versionをnpxから実行する。`latest`の無条件利用ではなく、本番では承認済みversionを指定する。Compose運用ではyori本体と同じ `/etc/yori/yori.env` とinternal Docker networkを使う。
 
 固定DB資格情報、host公開DB port、完成済みDB URLの二重管理は使わない。配置、migration、read-only bootstrap mount、token取扱いは [deployment手順](deployment/README.md) を正本とする。
 
@@ -21,10 +21,11 @@ repository内の開発実行:
 DATABASE_URL='<test-or-development-database-url>' npm run --silent yori -- inspect <company-uuid>
 ```
 
-将来、review済みpackage artifactをinstallする場合のbin名:
+npm registryの固定versionをnpxで実行:
 
 ```sh
-yori inspect <company-uuid>
+DATABASE_URL='<database-url>' \
+  npx --yes --package=yori-cli@<reviewed-version> yori inspect <company-uuid>
 ```
 
 `DATABASE_URL` はargvで受け取らない。未設定・空なら `invalid_admin_config` で終了する。入力はすべてJSON fileで渡す。本番では完成済みURLを直接管理せず、Composeが `YORI_POSTGRES_USER`、`YORI_POSTGRES_PASSWORD`、`YORI_POSTGRES_DB` から構成する。
@@ -69,6 +70,12 @@ npm run build
 
 ## 配布
 
-試運転はprivate cloneを使い、npm publishを要件にしない。現在のpackageは `UNLICENSED` である。registry配布はlicense、公開範囲、package名所有、署名・provenance、versioning、publish権限、2FAを別途決定してから行う。
+public npm registryの `yori-cli` を正式配布先とする。releaseはレビュー済みcommitからversionを固定し、test、typecheck、lint、build、`npm pack --dry-run`の成功後に行う。
+
+```sh
+npm publish --access public --provenance
+```
+
+publish権限は2FAを必須とし、releaseごとにversionとprovenanceを確認する。現在のpackageは `UNLICENSED` で、公開配布しても再利用許諾を与えない。licenseを変更する場合は別の明示的な決定とレビューが必要である。
 
 package化した場合に含むのは `README.md`、`files: ["dist"]` の対象、`package.json` で、binは `yori` → `dist/admin/cli.js` である。
