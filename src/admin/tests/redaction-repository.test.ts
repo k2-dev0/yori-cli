@@ -116,9 +116,10 @@ describe('redaction:replace / redaction:list', () => {
     parseSuccessJson(await replacePolicy(companyId, 0, ['baseline']));
 
     const hundred = Array.from({ length: 100 }, (_, index) => `limit-rule-${index}`);
+    const hundredSorted = [...hundred].sort();
     parseSuccessJson(await replacePolicy(companyId, 1, hundred));
     assert.equal(await countRows(pool, 'company_redaction_rules'), 100);
-    assert.deepEqual((await listPolicy(companyId)).rules, hundred);
+    assert.deepEqual((await listPolicy(companyId)).rules, hundredSorted, 'listはliteral順で決定的に返す');
 
     interface InvalidCase {
       label: string;
@@ -138,14 +139,14 @@ describe('redaction:replace / redaction:list', () => {
       const run = await replacePolicy(companyId, 2, invalid.rules);
       expectFixedFailure(run, ['invalid_arguments', 'internal_error']);
       assert.ok(!run.stderr.includes('LEAK_MARKER_rule'), `${invalid.label} のstderrへrule値を出している`);
-      assert.deepEqual(await storedRules(companyId), [{ version: 2, rules: hundred }], `${invalid.label} でpolicyを変更している`);
+      assert.deepEqual(await storedRules(companyId), [{ version: 2, rules: hundredSorted }], `${invalid.label} でpolicyを変更している`);
     }
 
     const unknownField = await withInputFile('redaction.json', { company_id: companyId, expected_version: 2, rules: [], extra: true }, (filePath) =>
       runAdmin(['redaction:replace', filePath]),
     );
     expectFixedFailure(unknownField, ['invalid_arguments', 'internal_error']);
-    assert.deepEqual(await storedRules(companyId), [{ version: 2, rules: hundred }]);
+    assert.deepEqual(await storedRules(companyId), [{ version: 2, rules: hundredSorted }]);
   });
 
   it('staleなexpected_versionは競合として拒否し、versionとrulesを変更しない', async () => {
@@ -253,6 +254,26 @@ describe('project:repository:add / remove', () => {
     });
     expectFixedFailure(crossCompany, ['invalid_arguments', 'internal_error']);
     assert.equal(crossCompany.stderr.trim(), 'admin: project_not_found', '別会社projectを会社不一致として拒否していない');
-    assert.equal(await countRows(pool, 'project_repositories'), 2);
+    // 失敗した2操作はどちらも行を追加しない。残るのはcreateProjectが入れたprimary repositoryの1行だけ。
+    assert.equal(await countRows(pool, 'project_repositories'), 1);
+  });
+
+  it('primary repositoryはremoveで削除できず、固定codeで拒否する', async () => {
+    const companyId = await createCompany();
+    const projectId = await createProject(companyId, 'github.com/example/primary');
+
+    const run = await runRepositoryCommand('project:repository:remove', {
+      company_id: companyId,
+      project_id: projectId,
+      repository: 'https://github.com/example/primary.git',
+    });
+    expectFixedFailure(run, ['invalid_arguments', 'internal_error']);
+    assert.equal(run.stderr.trim(), 'admin: repository_conflict', 'primary repositoryを削除可能にしている');
+    assert.equal(await countRows(pool, 'project_repositories'), 1);
+    const stored = await pool.query<{ repository_identifier: string }>(
+      'SELECT repository_identifier FROM project_repositories WHERE project_id = $1',
+      [projectId],
+    );
+    assert.deepEqual(stored.rows.map((row) => row.repository_identifier), ['github.com/example/primary']);
   });
 });
