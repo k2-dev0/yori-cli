@@ -85,6 +85,13 @@ case "$1" in
     IFS= read -r token || exit 1
     printf '%s' "$token" > "\${YORI_TEST_KEYCHAIN_FILE:?}"
     ;;
+  delete-generic-password)
+    if [ -f "\${YORI_TEST_KEYCHAIN_FILE:?}" ]; then
+      rm -f "\${YORI_TEST_KEYCHAIN_FILE:?}"
+    else
+      exit 44
+    fi
+    ;;
   *)
     exit 1
     ;;
@@ -331,7 +338,10 @@ export function agentHookFixture(): Record<string, unknown> {
 
 export const DEFAULT_TOKEN = 'yori_fixture_token_2f8a9c';
 export const DEFAULT_COLLECTOR_VERSION = '9.9.9-test1';
-export const DEFAULT_COLLECTOR_BUNDLE = 'console.log("collector-fixture-v1");\n';
+// launcherがYORI_COLLECTOR_TOKENを子collector envへだけ渡すことを検出するfixture。
+// envが無ければ非0で終了し、あればtoken値を出さずmarkerだけを出す。
+export const DEFAULT_COLLECTOR_BUNDLE =
+  "if (!process.env.YORI_COLLECTOR_TOKEN) { console.error('collector-fixture-missing-token'); process.exit(3); }\nconsole.log(\"collector-fixture-v1\");\n";
 export const DEFAULT_SETUP_RESPONSE: ApiResponse = {
   status: 200,
   body: {
@@ -385,19 +395,23 @@ export async function hookCommandFor(fixture: CollectorFixture, agent: Collector
 
 // hookへ登録されたcommandを実際に起動し、stable launcherが現在versionを実行することを確認する。
 // security/git overrideはhook実行にも渡し、実Keychain・実gitへ触れない。
-export function runShellCommand(fixture: CollectorFixture, command: string) {
-  return spawnSync('/bin/sh', ['-c', command], {
-    cwd: fixture.gitRoot,
-    encoding: 'utf8',
-    env: {
-      ...process.env,
-      HOME: fixture.home,
-      YORI_SECURITY_BIN: path.join(fixture.binDir, 'security'),
-      YORI_GIT_BIN: path.join(fixture.binDir, 'git'),
-      YORI_TEST_SECURITY_LOG: fixture.securityLogPath,
-      YORI_TEST_KEYCHAIN_FILE: fixture.keychainPath,
-      YORI_TEST_GIT_ROOT: fixture.gitRoot,
-      YORI_TEST_GIT_ORIGIN: fixture.gitOrigin,
-    },
-  });
+export function runShellCommand(fixture: CollectorFixture, command: string, envOverrides: Record<string, string | undefined> = {}) {
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    HOME: fixture.home,
+    YORI_SECURITY_BIN: path.join(fixture.binDir, 'security'),
+    YORI_GIT_BIN: path.join(fixture.binDir, 'git'),
+    YORI_TEST_SECURITY_LOG: fixture.securityLogPath,
+    YORI_TEST_KEYCHAIN_FILE: fixture.keychainPath,
+    YORI_TEST_GIT_ROOT: fixture.gitRoot,
+    YORI_TEST_GIT_ORIGIN: fixture.gitOrigin,
+  };
+  for (const [key, value] of Object.entries(envOverrides)) {
+    if (value === undefined) {
+      delete env[key];
+    } else {
+      env[key] = value;
+    }
+  }
+  return spawnSync('/bin/sh', ['-c', command], { cwd: fixture.gitRoot, encoding: 'utf8', env });
 }
