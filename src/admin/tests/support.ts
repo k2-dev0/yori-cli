@@ -67,7 +67,7 @@ export async function runAdmin(args: string[], options: { env?: Record<string, s
 
 // 一時directoryへ入力fileを書き、CLIへ渡す。file本文がstderrへ漏れないことの検証にも使う。
 export async function withInputFile<T>(name: string, content: unknown, run: (filePath: string) => Promise<T>): Promise<T> {
-  const directory = await mkdtemp(path.join(tmpdir(), 'yori-admin-test-'));
+  const directory = await mkdtemp(path.join(tmpdir(), 'yori-cli-test-'));
   try {
     const filePath = path.join(directory, name);
     await writeFile(filePath, typeof content === 'string' ? content : JSON.stringify(content), 'utf8');
