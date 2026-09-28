@@ -13,11 +13,10 @@
 public npm registryへpublishした `yori-cli` の承認済みversionを固定し、`yori` binをnpxから実行する。
 
 ```sh
-DATABASE_URL='<database-url>' \
-  npx --yes --package=yori-cli@<reviewed-version> yori inspect <company-uuid>
+npx --yes --package=yori-cli@<reviewed-version> yori inspect <company-uuid>
 ```
 
-Compose運用の `/etc/yori/yori.env`、migration順序、review済みsource配置、read-only input mount、token非記録は [deployment手順](../deployment/README.md) を正本とする。
+`DATABASE_URL` をcommand行へ書かない。本番ではyoriのinternal Docker networkへ参加する一時Node container内でnpxを起動し、`/etc/yori/yori.env` の3値からcontainer内でURLを構成する。migration順序、review済みsource配置、read-only input mount、token非記録は [deployment手順](../deployment/README.md) を正本とする。
 
 `DATABASE_URL` はargvで受け取らない。未設定・空の場合は `invalid_admin_config` で終了する。本番Composeはyori本体と同じDBの3値からURLを構成する。
 
