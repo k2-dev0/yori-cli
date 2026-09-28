@@ -4,12 +4,15 @@ import { pathToFileURL } from 'node:url';
 import type { Pool } from 'pg';
 import { z } from 'zod';
 import { createPool } from '../db/pool.js';
+import { runCollectorCommand } from '../collector/commands.js';
 import {
   bootstrapInputSchema,
   companyCreateInputSchema,
   employeeCreateInputSchema,
   memberInputSchema,
   projectCreateInputSchema,
+  redactionReplaceInputSchema,
+  repositoryInputSchema,
   tokenIssueInputSchema,
   tokenRevokeInputSchema,
   type AdminErrorCode,
@@ -17,12 +20,16 @@ import {
 } from './contract.js';
 import {
   addMember,
+  addRepository,
   createCompany,
   createEmployee,
   createProject,
   inspectCompany,
   issueToken,
+  listRedactionPolicy,
   removeMember,
+  removeRepository,
+  replaceRedactionPolicy,
   revokeToken,
   runBootstrap,
 } from './service.js';
@@ -84,6 +91,33 @@ async function runInputCommand<TSchema extends z.ZodType, TOutput>(
   }
 }
 
+// collector commandは既存adminのDB契約から独立させ、DATABASE_URLを要求しない。
+async function runCollectorCliCommand(command: string, env: NodeJS.ProcessEnv): Promise<number> {
+  const result = await runCollectorCommand(command, env);
+  return result.ok ? succeed(result.value) : fail(result.code);
+}
+
+async function runListRedaction(env: NodeJS.ProcessEnv, rest: string[]): Promise<number> {
+  if (rest.length !== 1) {
+    return fail('invalid_arguments');
+  }
+  const parsed = z.uuid().safeParse(rest[0]);
+  if (!parsed.success) {
+    return fail('invalid_arguments');
+  }
+  const url = databaseUrl(env);
+  if (url === null) {
+    return fail('invalid_admin_config');
+  }
+  const pool = createPool(url);
+  try {
+    const result = await listRedactionPolicy(pool, parsed.data.toLowerCase());
+    return result.ok ? succeed(result.value) : fail(result.code);
+  } finally {
+    await pool.end();
+  }
+}
+
 async function runInspect(env: NodeJS.ProcessEnv, rest: string[]): Promise<number> {
   if (rest.length !== 1) {
     return fail('invalid_arguments');
@@ -126,6 +160,19 @@ export async function runCli(argv: string[], env: NodeJS.ProcessEnv = process.en
         return await runInputCommand(env, tokenIssueInputSchema, rest, (pool, input) => issueToken(pool, input));
       case 'token:revoke':
         return await runInputCommand(env, tokenRevokeInputSchema, rest, (pool, input) => revokeToken(pool, input));
+      case 'redaction:replace':
+        return await runInputCommand(env, redactionReplaceInputSchema, rest, (pool, input) => replaceRedactionPolicy(pool, input));
+      case 'redaction:list':
+        return await runListRedaction(env, rest);
+      case 'project:repository:add':
+        return await runInputCommand(env, repositoryInputSchema, rest, (pool, input) => addRepository(pool, input));
+      case 'project:repository:remove':
+        return await runInputCommand(env, repositoryInputSchema, rest, (pool, input) => removeRepository(pool, input));
+      case 'collector:install':
+      case 'collector:update':
+      case 'collector:doctor':
+      case 'collector:uninstall':
+        return await runCollectorCliCommand(command, env);
       case 'inspect':
         return await runInspect(env, rest);
       default:
