@@ -4,6 +4,15 @@
 -- yori-cli は migration を持たないため、本番DBのスキーマは yori 側の migration が作る。
 -- CREATE IF NOT EXISTS により、同一テストDBへの再実行を許容する。
 
+CREATE TABLE IF NOT EXISTS schema_migrations (
+  version text PRIMARY KEY,
+  applied_at timestamptz NOT NULL DEFAULT now()
+);
+
+INSERT INTO schema_migrations (version)
+VALUES ('0001_init.sql')
+ON CONFLICT (version) DO NOTHING;
+
 CREATE TABLE IF NOT EXISTS companies (
   id uuid PRIMARY KEY,
   name text NOT NULL,
