@@ -24,9 +24,10 @@ DATABASE_URL='<test-or-development-database-url>' npm run --silent yori -- inspe
 npm registryの固定versionをnpxで実行:
 
 ```sh
-DATABASE_URL='<database-url>' \
-  npx --yes --package=yori-cli@<reviewed-version> yori inspect <company-uuid>
+npx --yes --package=yori-cli@<reviewed-version> yori inspect <company-uuid>
 ```
+
+`DATABASE_URL` はこのcommand行に書かず、保護された実行環境から渡す。本番DBはhost port非公開のため、npxもyoriのinternal Docker networkへ参加する一時container内で実行する。実行例は [deployment手順](deployment/README.md) を使う。
 
 `DATABASE_URL` はargvで受け取らない。未設定・空なら `invalid_admin_config` で終了する。入力はすべてJSON fileで渡す。本番では完成済みURLを直接管理せず、Composeが `YORI_POSTGRES_USER`、`YORI_POSTGRES_PASSWORD`、`YORI_POSTGRES_DB` から構成する。
 
@@ -73,9 +74,9 @@ npm run build
 public npm registryの `yori-cli` を正式配布先とする。releaseはレビュー済みcommitからversionを固定し、test、typecheck、lint、build、`npm pack --dry-run`の成功後に行う。
 
 ```sh
-npm publish --access public --provenance
+npm publish --access public
 ```
 
-publish権限は2FAを必須とし、releaseごとにversionとprovenanceを確認する。現在のpackageは `UNLICENSED` で、公開配布しても再利用許諾を与えない。licenseを変更する場合は別の明示的な決定とレビューが必要である。
+publish権限は2FAを必須とし、releaseごとにversionとregistry上のintegrityを確認する。source repositoryをpublic化し、npm対応のOIDC CIからpublishする構成を導入するまで `--provenance` は使わない。現在のpackageは `UNLICENSED` で、公開配布しても再利用許諾を与えない。licenseを変更する場合は別の明示的な決定とレビューが必要である。
 
 package化した場合に含むのは `README.md`、`files: ["dist"]` の対象、`package.json` で、binは `yori` → `dist/admin/cli.js` である。
