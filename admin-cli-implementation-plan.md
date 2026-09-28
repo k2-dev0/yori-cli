@@ -65,7 +65,7 @@ DB migrationは追加しない。既存の`companies`、`employees`、`projects`
 
 ## 4. 公開コマンド契約
 
-エントリポイントは`npm run admin -- <command>`とする。Composeでは次の形で実行できるようにする。
+公開binは`yori <command>`、repository内のentry pointは`npm run cli -- <command>`とする。Composeでは次の形で実行できるようにする。
 
 ```sh
 docker compose -p yori -f deployment/compose.yaml --profile tools run --rm cli <command>
@@ -202,8 +202,8 @@ internal_error
 | `src/admin/cli.ts` | argv、file読取、`DATABASE_URL`、stdout/stderr、終了コード |
 | `src/admin/tests/admin-cli.test.ts` | 実PostgreSQLによるCLI・serviceの正常系、異常系、競合検証 |
 | `docs/admin.md` | JSON例、ホスト／Compose実行、token紛失・失効、固定code |
-| `package.json` | `admin` script追加 |
-| `deployment/compose.yaml` | tools profileの`admin` service追加 |
+| `package.json` | `yori` binと`cli` script追加 |
+| `deployment/compose.yaml` | tools profileの`cli` service追加 |
 | `deployment/README.md` | migration後のbootstrap、通常管理コマンドへの導線 |
 
 production codeから`src/db/tests/fixtures.ts`をimportしない。token生成・hash等の共通化が必要ならproduction moduleへ実装し、fixture側はその契約をテストする。
@@ -215,8 +215,8 @@ production codeから`src/db/tests/fixtures.ts`をimportしない。token生成�
 3. `bootstrap`のadvisory lock、全体transaction、ref解決を実装する。
 4. `src/admin/cli.ts`へコマンドdispatch、JSON file読取、出力境界を実装する。
 5. 実PostgreSQLテストを追加する。
-6. `package.json`へ`admin` scriptを追加する。
-7. Compose tools profileへ`admin` serviceを追加する。
+6. `package.json`へ`yori` binと`cli` scriptを追加する。
+7. Compose tools profileへ`cli` serviceを追加する。
 8. `docs/admin.md`と`deployment/README.md`へ運用手順を追加する。
 9. `npm test`、`npm run typecheck`、`npm run lint`、`npm run build`を実行する。
 10. 独立レビューで契約、会社境界、秘密漏えい、競合、既存回帰を確認する。
@@ -261,7 +261,7 @@ production codeから`src/db/tests/fixtures.ts`をimportしない。token生成�
 
 - 既存のAPI認証、案件認可、イベント受付が変わらない。
 - collector、worker、MCPの既存CLI出力が変わらない。
-- migration数、Compose service allowlist等の固定assertがある場合は`admin`追加を反映する。
+- migration数、Compose service allowlist等の固定assertがある場合は`cli`追加を反映する。
 - `npm test`、typecheck、lint、buildが成功する。
 
 ## 10. 受け入れ条件
