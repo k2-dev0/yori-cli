@@ -1,47 +1,38 @@
-# yori 管理CLI (`yori-admin`)
+# yori 管理CLI (`yori`)
 
-会社・社員・案件・案件メンバー・認証トークンを管理する独立CLI。`yori` 本体のworker CLIとは別process・別entry pointで動く。
+会社・社員・案件・案件メンバー・認証トークンを管理するyori-cliのcommand契約。package名は `yori-cli`、実行コマンドは `yori` である。
 
-- DB schemaの正本は `yori` 本体の `src/db/migrations/0001_init.sql`。このリポジトリはmigrationを持たない。
+- DB schemaの正本は `yori` 本体の `src/db/migrations/*.sql` と `schema_migrations`。このrepositoryはmigrationを持たない。
 - 会社・社員・案件を物理削除するコマンドは無い。破壊的操作は案件メンバー解除とtoken失効だけ。
 - 生の認証トークンは `bootstrap` / `token:issue` の成功時に1度だけstdoutへ出る。DBにはSHA-256だけを保存する。
 
 ## 1. 実行方法
 
-### npx（clone不要・推奨）
+### 本番試運転
 
-```sh
-export DATABASE_URL='postgres://yori:yori@<host>:5432/yori'
-npx --yes yori-cli inspect <company-uuid>
-```
+private repositoryをread-only Deploy Keyでcloneし、review済みSHAのCompose `cli` serviceから実行する。npm publishは試運転の要件にしない。`/etc/yori/yori.env`、migration順序、read-only input mount、token非記録は [deployment手順](../deployment/README.md) を正本とする。
 
-bin名で実行する場合は `npx --yes --package=yori-cli yori-admin inspect <company-uuid>`。常時使う場合は `npm install -g yori-cli` で `yori-admin` を直接実行できる。
-
-`DATABASE_URL` はargvで受け取らない（shell履歴へ値を残さないため）。未設定・空の場合は `invalid_admin_config` で終了する。
+`DATABASE_URL` はargvで受け取らない。未設定・空の場合は `invalid_admin_config` で終了する。本番Composeはyori本体と同じDBの3値からURLを構成する。
 
 ### リポジトリ内（開発時）
 
 ```sh
-export DATABASE_URL='postgres://yori:yori@<host>:5432/yori'
-npm run --silent admin -- inspect <company-uuid>
+DATABASE_URL='<test-or-development-database-url>' npm run --silent cli -- inspect <company-uuid>
 ```
 
 `npm run` のbannerをstdoutへ混ぜないため `--silent` を使う。
 
 ### Compose (tools profile)
 
-yori本体のCompose project (`yori`) が作るnetworkへ参加し、その `db` サービスへ接続する。先にyori本体のDBを起動しておくこと。
+yori本体のmigration完了後に、同じenv fileとexternal networkを使う。
 
 ```sh
-# yori本体 (別リポジトリ) 側
-docker compose -p yori -f deployment/compose.yaml up -d db
-
-# yori-cli側
-docker compose -f deployment/compose.yaml --profile tools run --rm admin inspect <company-uuid>
+docker compose --env-file /etc/yori/yori.env -f deployment/compose.yaml --profile tools run --rm \
+  cli inspect <company-uuid>
 ```
 
 - network名は既定で `yori_default`。別名を使う場合は `YORI_ADMIN_NETWORK` を指定する。
-- 接続先は既定で `postgres://yori:yori@db:5432/yori`。変更する場合は `YORI_ADMIN_DATABASE_URL` を指定する。
+- `YORI_POSTGRES_USER`、`YORI_POSTGRES_PASSWORD`、`YORI_POSTGRES_DB` は必須。固定URLへのfallbackはない。
 - 初回実行時はcontainer内で `npm ci` が走る。
 
 ## 2. 入出力の契約
@@ -215,19 +206,21 @@ repositoryはUTF-8で1024バイト以内。host小文字・先頭slashなし・�
 | `member_already_exists` | 所属が既に存在する |
 | `member_not_found` | 解除対象の所属が存在しない |
 | `token_already_revoked` | 対象tokenが失効済み |
-| `internal_error` | DB接続障害・予期しない例外・token hash再生成の上限到達 |
+| `internal_error` | migration marker欠落・DB接続障害・予期しない例外・token hash再生成の上限到達 |
 
 ## 8. テスト
 
 ```sh
 # テスト専用DBを起動して実行し、終了後に破棄する
 npm run test:db
+node --test deployment/compose-config.test.mjs
+node deployment/run-production-integration-smoke.mjs
 
 # 既にテストDBがある場合（既定は 127.0.0.1:55432）
 npm test
 ```
 
-テストは実PostgreSQLへ接続し、`src/admin/tests/schema.sql` で `yori` の管理対象tableと同じ契約を適用する。schemaの正本は `yori` の `0001_init.sql`。
+repository testは `src/admin/tests/schema.sql` で管理対象table契約を高速に検査する。加えてintegration smokeがyori本体の実migratorと全migrationを専用DBへ適用し、migration前拒否とbootstrap / inspectを検査する。
 
 ## 9. 対象外
 
