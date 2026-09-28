@@ -17,7 +17,7 @@ private repositoryをread-only Deploy Keyでcloneし、review済みSHAのCompose
 ### リポジトリ内（開発時）
 
 ```sh
-DATABASE_URL='<test-or-development-database-url>' npm run --silent cli -- inspect <company-uuid>
+DATABASE_URL='<test-or-development-database-url>' npm run --silent yori -- inspect <company-uuid>
 ```
 
 `npm run` のbannerをstdoutへ混ぜないため `--silent` を使う。
