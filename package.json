@@ -2,10 +2,10 @@
   "name": "yori-cli",
   "version": "0.1.0",
   "type": "module",
-  "description": "yori の管理CLI (yori-admin)。会社・社員・案件・案件メンバー・認証トークンを管理する",
+  "description": "yori の管理CLI。会社・社員・案件・案件メンバー・認証トークンを管理する",
   "license": "UNLICENSED",
   "bin": {
-    "yori-admin": "dist/admin/cli.js"
+    "yori": "dist/admin/cli.js"
   },
   "files": [
     "dist"
@@ -20,7 +20,7 @@
     "lint": "eslint .",
     "build": "tsc -p tsconfig.build.json",
     "prepack": "npm run build",
-    "admin": "tsx src/admin/cli.ts"
+    "cli": "tsx src/admin/cli.ts"
   },
   "dependencies": {
     "pg": "^8.23.0",
