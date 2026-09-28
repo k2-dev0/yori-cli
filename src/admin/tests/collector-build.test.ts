@@ -118,6 +118,25 @@ describe('collector build copy', () => {
     }
   });
 
+  it('manifest切替に失敗したらbundle copyも元へrollbackする', async () => {
+    const yoriRepository = await mkdtemp(path.join(tmpdir(), 'yori-repository-rollback-'));
+    try {
+      await withDistBackup(async () => {
+        await writeArtifact(yoriRepository, { version: '9.9.9-rollback1', content: 'console.log("rollback-v1");\n' });
+        assert.equal(runBuild(yoriRepository).status, 0, 'rollback testの事前buildが失敗した');
+        const before = await readFile(BUNDLE_PATH);
+        // manifestのtargetをdirectoryへ置換し、2つ目のrenameだけを失敗させる。
+        await rm(MANIFEST_PATH, { force: true });
+        await mkdir(MANIFEST_PATH, { recursive: true });
+        const result = runBuild(yoriRepository);
+        assert.notEqual(result.status, 0, 'manifest切替失敗でbuildが成功した');
+        assert.deepEqual(await readFile(BUNDLE_PATH), before, 'manifest切替失敗でbundle copyが不整合になっている');
+      });
+    } finally {
+      await rm(yoriRepository, { recursive: true, force: true });
+    }
+  });
+
   it('package filesはcollector bundleとmanifestを含み、runtime dependenciesは0のまま', async () => {
     const packageJson = JSON.parse(await readFile(path.join(REPO_ROOT, 'package.json'), 'utf8')) as {
       files: string[];
