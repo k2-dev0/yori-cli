@@ -5,6 +5,7 @@ yori の管理CLIを、yori本体がmigrationを適用したPostgreSQLへ接続�
 | file | 役割 |
 |---|---|
 | `compose.yaml` | `cli` service（tools profile）。yori本体のexternal networkへ参加する |
+| `compose.npx.yaml` | public npmの固定versionを秘密を限定したcontainerで実行する |
 | `compose.test.yaml` | repository test専用DB。loopback以外へportを公開しない |
 | `run-tests.mjs` | test専用DBを起動し、repository test後に破棄する |
 | `run-production-integration-smoke.mjs` | yori本体のtest Composeと実migrationを使う合成smoke |
@@ -85,34 +86,17 @@ YORI_ADMIN_NETWORK=<actual-external-network>
 
 ### 3.1 public npm packageをnpxで実行する
 
-本番DBはhostへport公開しないため、host上のnpxからは接続できない。一時Node containerをyoriのinternal networkへ参加させ、公開npmの承認済みversionを実行する。共通env fileはhostの隔離subshellで読み、containerへはCLIに必要な3値だけを選択転送する。JevやVoyage等のAPI秘密はcontainerへ渡さない。`DATABASE_URL` はcontainer内で構成し、command引数やhostのshell historyへ値を残さない。
+本番DBはhostへport公開しないため、host上のnpxからは接続できない。`compose.npx.yaml` の一時Node containerをyoriのinternal networkへ参加させ、公開npmの承認済みversionを実行する。Composeが `/etc/yori/yori.env` をdotenvとしてparseし、containerへは構成済み `DATABASE_URL` だけを渡す。JevやVoyage等のAPI秘密はcontainerへ渡さない。DB URLはcommand引数やhostのshell historyへ残さない。
 
 ```sh
-(
-  set -a
-  . /etc/yori/yori.env
-  set +a
-  docker run --rm \
-    --network yori_default \
-    --env YORI_POSTGRES_USER \
-    --env YORI_POSTGRES_PASSWORD \
-    --env YORI_POSTGRES_DB \
-    --env NPM_CONFIG_LOGLEVEL=error \
-    --volume /etc/yori/bootstrap.json:/input/bootstrap.json:ro \
-    node:24.21.0-bookworm-slim@sha256:0e0ff40c39bc087845bfb27465a0df4ea419520094bc35842ff83dd8cbe6f9b6 \
-    sh -eu -c '
-      : "${YORI_POSTGRES_USER:?required}"
-      : "${YORI_POSTGRES_PASSWORD:?required}"
-      : "${YORI_POSTGRES_DB:?required}"
-      version="$1"
-      shift
-      export DATABASE_URL="postgres://${YORI_POSTGRES_USER}:${YORI_POSTGRES_PASSWORD}@db:5432/${YORI_POSTGRES_DB}"
-      exec npx --yes --package="yori-cli@${version}" yori "$@"
-    ' -- <reviewed-version> bootstrap /input/bootstrap.json
-)
+cd /srv/yori-cli
+docker compose --env-file /etc/yori/yori.env -f deployment/compose.npx.yaml --profile tools config --quiet
+docker compose --env-file /etc/yori/yori.env -f deployment/compose.npx.yaml --profile tools run --rm \
+  --volume /etc/yori/bootstrap.json:/input/bootstrap.json:ro \
+  cli <reviewed-version> bootstrap /input/bootstrap.json
 ```
 
-network名が異なる場合は `--network yori_default` を実際の外部network名へ置き換える。`inspect`は末尾のcommand引数を `inspect <company-uuid>` へ置き換える。生tokenが出るcommandは後述のtoken取扱いに従う。
+network名が異なる場合は `/etc/yori/yori.env` の `YORI_ADMIN_NETWORK` に実際の外部network名を設定する。`inspect`は末尾のcommand引数を `<reviewed-version> inspect <company-uuid>` へ置き換える。生tokenが出るcommandは後述のtoken取扱いに従う。
 
 ### 3.2 source checkoutのCompose serviceを使う
 
