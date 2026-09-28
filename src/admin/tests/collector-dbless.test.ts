@@ -8,6 +8,7 @@ import {
   withCollectorFixture,
   writeApiSpec,
 } from './collector-support.js';
+import { isSupportedCollectorPlatform } from '../../collector/contract.js';
 import { REPO_ROOT } from './support.js';
 
 // collector commandはDBを必要としない。既存admin commandのDATABASE_URL契約は回帰として維持する。
@@ -34,6 +35,13 @@ describe('collector commandのDB非依存', () => {
       assert.equal(run.stdout, '');
       assert.equal(run.stderr, 'admin: invalid_admin_config\n');
     });
+  });
+
+  it('collector commandのplatform scopeはdarwinだけに固定する', () => {
+    assert.equal(isSupportedCollectorPlatform('darwin'), true);
+    for (const platform of ['linux', 'win32', 'freebsd', 'aix']) {
+      assert.equal(isSupportedCollectorPlatform(platform), false, `${platform}を対応platformとして扱っている`);
+    }
   });
 
   it('未知commandはinvalid_argumentsのままcollector commandと混同しない', async () => {
