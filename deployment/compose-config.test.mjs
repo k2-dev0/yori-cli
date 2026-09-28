@@ -119,10 +119,10 @@ describe('published npx compose contract', () => {
     const result = composeConfig(validEnvironment(), NPX_COMPOSE_FILE);
     assert.equal(result.status, 0, `npx Compose configが失敗した: ${result.stderr}`);
 
-    const entrypoint = JSON.stringify(JSON.parse(result.stdout).services.cli.entrypoint);
+    const entrypoint = JSON.parse(result.stdout).services.cli.entrypoint.join('\n');
     assert.ok(entrypoint.includes('npx --yes'));
-    assert.ok(entrypoint.includes('yori-cli@${version}'));
-    assert.ok(entrypoint.includes(' yori "$@"'));
+    assert.ok(entrypoint.includes('yori-cli@$${version}'));
+    assert.ok(entrypoint.includes(' yori "$$@"'));
   });
 
   it('DB必須envの空値を拒否する', () => {
