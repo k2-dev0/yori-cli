@@ -11,12 +11,15 @@ const YORI_ROOT = path.resolve(process.env.YORI_REPOSITORY ?? path.join(REPO_ROO
 const YORI_COMPOSE_FILE = path.join(YORI_ROOT, 'deployment', 'compose.test.yaml');
 const CLI_COMPOSE_FILE = path.join(REPO_ROOT, 'deployment', 'compose.yaml');
 const PROJECT_NAME = `yori-cli-integration-${process.pid}`;
+const CLI_PROJECT_NAME = `${PROJECT_NAME}-cli`;
 const NETWORK_NAME = `${PROJECT_NAME}_default`;
 const SYNTHETIC_DATABASE_ENV = {
   YORI_POSTGRES_USER: 'yori',
   YORI_POSTGRES_PASSWORD: 'yori',
   YORI_POSTGRES_DB: 'yori',
   YORI_ADMIN_NETWORK: NETWORK_NAME,
+  YORI_CLI_NODE_MODULES_VOLUME: `${CLI_PROJECT_NAME}-node-modules`,
+  YORI_CLI_NPM_CACHE_VOLUME: `${CLI_PROJECT_NAME}-npm-cache`,
 };
 
 function run(command, args, options = {}) {
@@ -46,7 +49,7 @@ function yoriCompose(...args) {
 }
 
 function cliCompose(args) {
-  return run('docker', ['compose', '--file', CLI_COMPOSE_FILE, '--profile', 'tools', ...args], {
+  return run('docker', ['compose', '--project-name', CLI_PROJECT_NAME, '--file', CLI_COMPOSE_FILE, '--profile', 'tools', ...args], {
     env: { ...process.env, ...SYNTHETIC_DATABASE_ENV },
   });
 }
@@ -59,6 +62,16 @@ function assertNoSecret(output, forbidden, step) {
   for (const value of forbidden) {
     assert.ok(!output.includes(value), `${step} exposed protected data`);
   }
+}
+
+function assertCliFailure(result, code, step) {
+  assertExit(result, 1, step);
+  assert.equal(result.stdout, '');
+  const protocolLines = result.stderr
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith('admin:'));
+  assert.deepEqual(protocolLines, [`admin: ${code}`]);
 }
 
 let temporaryDirectory;
@@ -87,9 +100,7 @@ try {
     'bootstrap',
     '/input/bootstrap.json',
   ]);
-  assertExit(beforeMigration, 1, 'pre-migration bootstrap');
-  assert.equal(beforeMigration.stdout, '');
-  assert.equal(beforeMigration.stderr.trim(), 'admin: internal_error');
+  assertCliFailure(beforeMigration, 'internal_error', 'pre-migration bootstrap');
   console.log('PASS migration未適用DBを拒否');
 
   assertExit(await yoriCompose('run', '--rm', 'migrate'), 0, 'yori migration');
@@ -122,9 +133,7 @@ try {
     'bootstrap',
     '/input/bootstrap.json',
   ]);
-  assertExit(repeated, 1, 'repeated bootstrap');
-  assert.equal(repeated.stdout, '');
-  assert.equal(repeated.stderr.trim(), 'admin: bootstrap_already_completed');
+  assertCliFailure(repeated, 'bootstrap_already_completed', 'repeated bootstrap');
   assertNoSecret(repeated.stdout + repeated.stderr, [rawToken, 'postgres://', SYNTHETIC_DATABASE_ENV.YORI_POSTGRES_PASSWORD], 'repeated bootstrap');
   console.log('PASS bootstrap再実行を拒否');
 
@@ -140,6 +149,11 @@ try {
   console.error(error instanceof Error ? error.message : 'integration smoke failed');
   process.exitCode = 1;
 } finally {
+  const cliTeardown = await cliCompose(['down', '--volumes', '--remove-orphans']).catch(() => ({ code: 1 }));
+  if (cliTeardown.code !== 0) {
+    console.error(`cleanup failed for Compose project ${CLI_PROJECT_NAME}`);
+    process.exitCode = 1;
+  }
   const teardown = await yoriCompose('down', '--volumes', '--remove-orphans').catch(() => ({ code: 1 }));
   if (teardown.code !== 0) {
     console.error(`cleanup failed for Compose project ${PROJECT_NAME}`);
