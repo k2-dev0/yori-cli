@@ -45,9 +45,14 @@ async function runThroughSymlink(linkPath: string, args: string[]): Promise<Admi
 describe('bin entrypoint', () => {
   it('公開packageの実行コマンドをyoriだけに固定する', async () => {
     const packageJson = JSON.parse(await readFile(path.join(REPO_ROOT, 'package.json'), 'utf8'));
-    assert.deepEqual(packageJson.bin, { yori: 'dist/admin/cli.js' });
+    assert.deepEqual(packageJson.bin, { yori: 'dist/yori.cjs' });
+    assert.deepEqual(packageJson.files, ['dist/yori.cjs', 'dist/yori.cjs.map']);
     assert.deepEqual(packageJson.publishConfig, { access: 'public' });
-    assert.deepEqual(packageJson.dependencies, { pg: '8.23.0', uuid: '13.0.2', zod: '4.6.5' });
+    assert.equal(packageJson.dependencies, undefined);
+    assert.equal(packageJson.devDependencies.esbuild, '0.28.2');
+    assert.equal(packageJson.devDependencies.pg, '8.23.0');
+    assert.equal(packageJson.devDependencies.uuid, '13.0.2');
+    assert.equal(packageJson.devDependencies.zod, '4.6.5');
     assert.equal(packageJson.scripts.yori, 'tsx src/admin/cli.ts');
     assert.equal(packageJson.scripts.cli, undefined);
     assert.equal(packageJson.scripts.admin, undefined);
