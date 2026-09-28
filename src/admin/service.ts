@@ -31,6 +31,7 @@ export interface TokenIssueOptions {
 const REPOSITORY_CONSTRAINT = 'projects_company_id_repository_identifier_key';
 const MEMBER_CONSTRAINT = 'project_members_pkey';
 const TOKEN_HASH_CONSTRAINT = 'auth_tokens_token_hash_key';
+const REQUIRED_MIGRATION = '0001_init.sql';
 
 // PostgreSQLの一意制約違反だけを対象にする。他のDB障害を再生成や成功扱いで隠さない。
 function isUniqueViolation(error: unknown, constraint: string): boolean {
@@ -50,6 +51,13 @@ async function withTransaction<T>(pool: Pool, run: (client: PoolClient) => Promi
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+    const migration = await client.query<{ version: string }>('SELECT version FROM schema_migrations WHERE version = $1', [
+      REQUIRED_MIGRATION,
+    ]);
+    if (migration.rows.length !== 1) {
+      await client.query('ROLLBACK');
+      return { ok: false, code: 'internal_error' };
+    }
     const result = await run(client);
     if (!result.ok) {
       await client.query('ROLLBACK');
