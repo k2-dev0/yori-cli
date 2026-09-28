@@ -72,7 +72,7 @@ npm run build
 ## 配布
 
 public npm registryの `yori-cli` を正式配布先とする。releaseはレビュー済みcommitからversionを固定し、test、typecheck、lint、build、`npm pack --dry-run`の成功後に行う。
-公開packageのnpx実行で依存解決結果が後日変わらないよう、runtime dependenciesは完全versionで固定する。依存更新は別commitでレビューし、新しいpackage versionとしてreleaseする。
+公開packageのnpx実行で依存解決結果が後日変わらないよう、CLIとruntime dependenciesはrelease時に単一bundleへ固定し、公開packageのruntime dependenciesを0件にする。依存更新は別commitでレビューし、新しいpackage versionとしてreleaseする。
 
 ```sh
 npm publish --access public
@@ -80,4 +80,4 @@ npm publish --access public
 
 publish権限は2FAを必須とし、releaseごとにversionとregistry上のintegrityを確認する。source repositoryをpublic化し、npm対応のOIDC CIからpublishする構成を導入するまで `--provenance` は使わない。現在のpackageは `UNLICENSED` で、公開配布しても再利用許諾を与えない。licenseを変更する場合は別の明示的な決定とレビューが必要である。
 
-package化した場合に含むのは `README.md`、`files: ["dist"]` の対象、`package.json` で、binは `yori` → `dist/admin/cli.js` である。
+packageに含むのは `README.md`、`dist/yori.cjs`、`dist/yori.cjs.map`、`package.json` で、binは `yori` → `dist/yori.cjs` である。
