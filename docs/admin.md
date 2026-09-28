@@ -20,6 +20,8 @@ npx --yes --package=yori-cli@<reviewed-version> yori inspect <company-uuid>
 
 `DATABASE_URL` はargvで受け取らない。未設定・空の場合は `invalid_admin_config` で終了する。本番Composeはyori本体と同じDBの3値からURLを構成する。
 
+`collector:install` / `collector:update` / `collector:doctor` / `collector:uninstall` はDBを使わず、`DATABASE_URL` を要求しない。macOS専用で、他platformでは `unsupported_platform` で端末を変更せずに終了する。導入手順と保持するfileは [README](../README.md) を参照。
+
 ### リポジトリ内（開発時）
 
 ```sh
@@ -44,6 +46,7 @@ docker compose --env-file /etc/yori/yori.env -f deployment/compose.yaml --profil
 ## 2. 入出力の契約
 
 - 入力は常にJSON file。引数の順序誤りとshell履歴への値の露出を避けるため、コマンドライン引数では値を受けない。
+- 入力JSONはrepository外のpathでもよく、file pathだけを引数へ渡す。内容はstdout/stderrへ出さない。
 - 入力JSONはunknown fieldを拒否する (`invalid_input`)。
 - 成功時は1行のJSON objectだけをstdoutへ出し、終了コード0で終わる。
 - 既知の失敗は `admin: <code>` だけをstderrへ出し、終了コード1で終わる。
@@ -157,6 +160,48 @@ docker compose --env-file /etc/yori/yori.env -f deployment/compose.yaml --profil
 {"status":"ok","company":{"company_id":"<uuid>","name":"example","created_at":"2026-09-25T00:00:00.000Z"},"employees":[{"employee_id":"<uuid>","display_name":"Alice","created_at":"2026-09-25T00:00:00.000Z"}],"projects":[{"project_id":"<uuid>","repository_identifier":"github.com/example/project-a","created_at":"2026-09-25T00:00:00.000Z"}],"members":[{"project_id":"<uuid>","employee_id":"<uuid>","created_at":"2026-09-25T00:00:00.000Z"}],"tokens":[{"token_id":"<uuid>","employee_id":"<uuid>","created_at":"2026-09-25T00:00:00.000Z","revoked_at":null}]}
 ```
 
+### `redaction:replace <file.json>`
+
+会社のcustom伏せ字policyをversion CASで置換する。yori migration `0010_custom_redaction.sql` を適用済みのDBだけが対象で、markerが無ければ `internal_error`。
+
+```json
+{ "company_id": "<uuid>", "expected_version": 0, "rules": ["example-literal"] }
+```
+
+- `expected_version` が0のときだけpolicy行を作り、versionは1になる。既存policyへは `expected_version` が現在versionと一致する場合だけ置換し、versionを1増やす。
+- 不一致は `redaction_policy_conflict`、会社が無ければ `company_not_found`。失敗時はversion・rulesとも変更しない。
+- `rules` は最大100件、各512 code points以内。空文字・重複・既知placeholder（`[REDACTED:custom]`等）の部分文字列は `invalid_input`。
+- custom ruleはliteral一致だけで、built-inの秘匿置換は常に先に有効であり弱めない。
+- delete+insert+version incrementは1 transactionで行い、途中失敗時はrollbackする。
+
+成功出力例: `{"status":"replaced","company_id":"<uuid>","version":1}`
+
+### `redaction:list <company-id>`
+
+会社のcurrent policyをliteral順で返す。policy未登録の会社はversion 0・rules空。
+
+```json
+{"version":1,"rules":["example-literal"]}
+```
+
+生token・token hash・DB URLは返さない。
+
+### `project:repository:add` / `project:repository:remove <file.json>`
+
+案件のprimary repositoryとは別にcanonical repository aliasを追加・削除する。
+
+```json
+{ "company_id": "<uuid>", "project_id": "<uuid>", "repository": "https://github.com/example/project-a.git" }
+```
+
+- repositoryは `project:create` と同じ規則でcanonical化し、変換不能値は `invalid_input`。
+- 案件は入力会社のscope内で解決し、他社・存在しない案件は `project_not_found`。
+- `project:repository:add` は重複alias・他案件のprimary/aliasとの衝突を `repository_conflict` で拒否する。
+- `project:repository:remove` はprimary repositoryを削除できず `repository_conflict`、未登録aliasは `repository_not_found`。
+- 追加・削除は1 transactionで行い、yori migration `0010_custom_redaction.sql` が必要。
+
+成功出力例: `{"status":"created","project_id":"<uuid>","repository_identifier":"github.com/example/project-a"}`、removeは `{"status":"removed",...}`。
+
 ## 4. repository identifierの正規化
 
 `yori` 本体のcollector (`src/collector/remote.ts`) と同じ規則でcanonical化した値を保存する。collectorと違うidentifierを作らない。
@@ -185,6 +230,8 @@ repositoryはUTF-8で1024バイト以内。host小文字・先頭slashなし・�
 | `member:add` / `member:remove` | 案件は入力会社のscope内で解決し、他社・存在しない案件は `project_not_found`。社員はIDで解決し、存在しなければ `employee_not_found`、会社が違えば `company_scope_mismatch` |
 | `token:issue` | 社員はIDで解決し、存在しなければ `employee_not_found`、会社が違えば `company_scope_mismatch` |
 | `token:revoke` | tokenはIDで解決し、存在しなければ `token_not_found`、token会社または社員会社が違えば `company_scope_mismatch` |
+| `redaction:replace` / `redaction:list` | 入力会社が無ければ `company_not_found`。policyは会社scopeで解決する |
+| `project:repository:add` / `project:repository:remove` | 案件は入力会社のscope内で解決し、他社・存在しない案件は `project_not_found` |
 
 ## 6. tokenの紛失と失効
 
@@ -205,14 +252,30 @@ repositoryはUTF-8で1024バイト以内。host小文字・先頭slashなし・�
 | `bootstrap_already_completed` | 会社が既に存在する |
 | `company_not_found` | 指定会社が存在しない |
 | `employee_not_found` | 指定社員が存在しない |
-| `project_not_found` | 指定案件が入力会社のscope内に存在しない |
+| `project_not_found` | 指定案件が入力会社のscope内に存在しない、またはcollector setup APIが404を返した |
 | `token_not_found` | 指定tokenが存在しない |
 | `company_scope_mismatch` | 対象が別会社に属する |
-| `repository_conflict` | 同じ会社に同じcanonical identifierの案件が存在する |
+| `repository_conflict` | 同じ会社に同じcanonical identifierの案件が存在する、またはprimary repository・既存aliasと衝突する |
+| `repository_not_found` | 解除対象のrepository aliasが案件scope内に存在しない |
+| `redaction_policy_conflict` | `expected_version` がcurrent policy versionと一致しない |
 | `member_already_exists` | 所属が既に存在する |
 | `member_not_found` | 解除対象の所属が存在しない |
 | `token_already_revoked` | 対象tokenが失効済み |
 | `internal_error` | migration marker欠落・DB接続障害・予期しない例外・token hash再生成の上限到達 |
+| `agent_not_found` | collector導入先のagent設定（Codex / Claude Code）が1件も存在しない |
+| `unsupported_platform` | collector commandをmacOS以外で実行した |
+| `collector_artifact_invalid` | collector artifactまたはmanifestの欠落・checksum不一致 |
+| `collector_config_invalid` | collector configのapi_urlがhttps/loopback http以外、またはuserinfo・query・fragment付き |
+| `collector_hook_invalid` | hook設定がsymlink・不正JSON・非object |
+| `collector_hook_conflict` | 既存hookに所有entryと競合するcollector設定がある |
+| `collector_hook_error` | hook書き込みに失敗し、全成果物をrollbackした |
+| `collector_keychain_error` | Keychain tokenの登録・取得に失敗した |
+| `collector_repository_not_found` | cwdのgit originをcanonical repositoryへ解決できない |
+| `collector_invalid_request` / `collector_unauthorized` | setup APIが400 / 401を返した |
+| `collector_internal_error` | setup APIの500・transport error・応答契約違反 |
+| `collector_not_installed` | `collector:update` の対象となるinstall状態が無い |
+| `collector_install_error` | 端末側fileへの書き込みに失敗し、全成果物をrollbackした |
+| `collector_rollback_failed` | 失敗時のrollback自体に失敗した |
 
 ## 8. テスト
 
