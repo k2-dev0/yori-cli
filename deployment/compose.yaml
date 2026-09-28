@@ -1,5 +1,5 @@
-# yori-cli の通常Compose。管理CLI (admin) だけを持ち、DBはyori本体のComposeが作る。
-# adminはyori本体のCompose networkへ参加し、`db:5432` の共有DBへ接続する。
+# yori-cli の通常Compose。CLI serviceだけを持ち、DBはyori本体のComposeが作る。
+# cliはyori本体のCompose networkへ参加し、`db:5432` の共有DBへ接続する。
 # 既定ではyori本体のproject (yori) が作る network `yori_default` を使う。
 name: yori-cli
 
@@ -17,15 +17,15 @@ x-node-service: &node-service
       max-file: "3"
 
 services:
-  # 通常upでは起動しない。`run --rm admin <command>` の引数をそのままCLIへ渡す。
-  admin:
+  # 通常upでは起動しない。`run --rm cli <command>` の引数をそのままCLIへ渡す。
+  cli:
     <<: *node-service
     profiles:
       - tools
     networks:
       - yori
     environment:
-      DATABASE_URL: ${YORI_ADMIN_DATABASE_URL:-postgres://yori:yori@db:5432/yori}
+      DATABASE_URL: postgres://${YORI_POSTGRES_USER:?required}:${YORI_POSTGRES_PASSWORD:?required}@db:5432/${YORI_POSTGRES_DB:?required}
     entrypoint:
       - sh
       - -c
