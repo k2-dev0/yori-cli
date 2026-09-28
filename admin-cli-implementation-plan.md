@@ -7,7 +7,7 @@
 
 ## 1. 結論
 
-管理CLIはworker CLIへ追加せず、独立した`yori-admin`として実装する。初期導入を1トランザクションで行う`bootstrap`と、社員・案件・所属・トークンを個別管理するコマンドを提供する。
+管理CLIはyori-cli packageの`yori`コマンドとして実装する。初期導入を1トランザクションで行う`bootstrap`と、社員・案件・所属・トークンを個別管理するコマンドを提供する。
 
 DB migrationは追加しない。既存の`companies`、`employees`、`projects`、`project_members`、`auth_tokens`を正本として使用する。会社・社員・案件を物理削除するコマンドは提供せず、初期版の破壊的操作は案件メンバー解除とトークン失効に限定する。
 
@@ -68,7 +68,7 @@ DB migrationは追加しない。既存の`companies`、`employees`、`projects`
 エントリポイントは`npm run admin -- <command>`とする。Composeでは次の形で実行できるようにする。
 
 ```sh
-docker compose -p yori -f deployment/compose.yaml --profile tools run --rm admin <command>
+docker compose -p yori -f deployment/compose.yaml --profile tools run --rm cli <command>
 ```
 
 初期コマンドは次に固定する。
@@ -131,7 +131,7 @@ docker compose -p yori -f deployment/compose.yaml --profile tools run --rm admin
 - 作成結果は生成したIDと正規化済みの非秘密情報を返す。
 - `token:issue`と`bootstrap`のtoken発行結果だけ、`token_id`と生の`token`を返す。
 - `inspect`はtoken ID、社員ID、作成日時、失効日時だけを返し、生tokenとtoken hashを返さない。
-- npm bannerが混ざらないよう、運用例では`npm run --silent admin -- ...`を使用する。
+- npm bannerが混ざらないよう、運用例では`npm run --silent cli -- ...`を使用する。
 
 `token:issue`の成功出力例:
 
