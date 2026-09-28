@@ -46,7 +46,8 @@ describe('bin entrypoint', () => {
   it('公開packageの実行コマンドをyoriだけに固定する', async () => {
     const packageJson = JSON.parse(await readFile(path.join(REPO_ROOT, 'package.json'), 'utf8'));
     assert.deepEqual(packageJson.bin, { yori: 'dist/admin/cli.js' });
-    assert.equal(packageJson.scripts.cli, 'tsx src/admin/cli.ts');
+    assert.equal(packageJson.scripts.yori, 'tsx src/admin/cli.ts');
+    assert.equal(packageJson.scripts.cli, undefined);
     assert.equal(packageJson.scripts.admin, undefined);
   });
 
