@@ -83,6 +83,32 @@ docker network inspect yori_default >/dev/null
 YORI_ADMIN_NETWORK=<actual-external-network>
 ```
 
+### 3.1 public npm packageをnpxで実行する
+
+本番DBはhostへport公開しないため、host上のnpxからは接続できない。一時Node containerをyoriのinternal networkへ参加させ、公開npmの承認済みversionを実行する。`DATABASE_URL` はcontainer内で構成し、command引数やhostのshell historyへ値を残さない。
+
+```sh
+docker run --rm \
+  --network yori_default \
+  --env-file /etc/yori/yori.env \
+  --env NPM_CONFIG_LOGLEVEL=error \
+  --volume /etc/yori/bootstrap.json:/input/bootstrap.json:ro \
+  node:24.21.0-bookworm-slim@sha256:0e0ff40c39bc087845bfb27465a0df4ea419520094bc35842ff83dd8cbe6f9b6 \
+  sh -eu -c '
+    : "${YORI_POSTGRES_USER:?required}"
+    : "${YORI_POSTGRES_PASSWORD:?required}"
+    : "${YORI_POSTGRES_DB:?required}"
+    version="$1"
+    shift
+    export DATABASE_URL="postgres://${YORI_POSTGRES_USER}:${YORI_POSTGRES_PASSWORD}@db:5432/${YORI_POSTGRES_DB}"
+    exec npx --yes --package="yori-cli@${version}" yori "$@"
+  ' -- <reviewed-version> bootstrap /input/bootstrap.json
+```
+
+network名が異なる場合は `--network yori_default` を実際の外部network名へ置き換える。`inspect`は末尾のcommand引数を `inspect <company-uuid>` へ置き換える。生tokenが出るcommandは後述のtoken取扱いに従う。
+
+### 3.2 source checkoutのCompose serviceを使う
+
 Compose検証は `--quiet` を使う。通常の `docker compose config` は解決済み `DATABASE_URL` をstdoutへ表示するため、共有logや作業記録では実行しない。
 
 ```sh
