@@ -18,7 +18,7 @@ npm publishは行わない。private repositoryを `/srv/yori-cli` へread-only 
 repository内の開発実行:
 
 ```sh
-DATABASE_URL='<test-or-development-database-url>' npm run --silent cli -- inspect <company-uuid>
+DATABASE_URL='<test-or-development-database-url>' npm run --silent yori -- inspect <company-uuid>
 ```
 
 将来、review済みpackage artifactをinstallする場合のbin名:
