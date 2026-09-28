@@ -1,6 +1,6 @@
 {
   "name": "yori-cli",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "type": "module",
   "description": "yori の管理CLI。会社・社員・案件・案件メンバー・認証トークンを管理する",
   "license": "UNLICENSED",
