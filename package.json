@@ -4,6 +4,9 @@
   "type": "module",
   "description": "yori の管理CLI。会社・社員・案件・案件メンバー・認証トークンを管理する",
   "license": "UNLICENSED",
+  "publishConfig": {
+    "access": "public"
+  },
   "bin": {
     "yori": "dist/admin/cli.js"
   },
