@@ -54,8 +54,9 @@ CREATE TABLE IF NOT EXISTS auth_tokens (
   revoked_at timestamptz
 );
 
--- ここから yori migration 0010_custom_redaction.sql 相当。
--- yori-cliは0010のtableへliteralを登録するため、test fixtureも同じ制約を再現する。
+-- ここから yori migration 0010_custom_redaction.sql (rule_type/value/normalized_value) 相当。
+-- yori-cliは0010のtableへliteral/assignment_keyを登録するため、test fixtureも同じ制約を再現する。
+-- 旧shapeのrules tableが残るtest DBでも新契約へ揃うよう、rules tableだけ作り直す。
 -- project_repositoriesのFKが参照するprojectsの組UNIQUEを先に用意する。
 DO $$
 BEGIN
@@ -94,13 +95,33 @@ CREATE TABLE IF NOT EXISTS company_redaction_policies (
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 
-CREATE TABLE IF NOT EXISTS company_redaction_rules (
+DROP TABLE IF EXISTS company_redaction_rules CASCADE;
+
+CREATE TABLE company_redaction_rules (
   company_id uuid NOT NULL REFERENCES company_redaction_policies (company_id) ON DELETE CASCADE,
-  literal text NOT NULL,
-  PRIMARY KEY (company_id, literal),
-  CONSTRAINT company_redaction_rules_literal_not_empty CHECK (literal <> ''),
-  CONSTRAINT company_redaction_rules_literal_not_placeholder_fragment CHECK (NOT yori_is_redaction_placeholder_fragment(literal)),
-  CONSTRAINT company_redaction_rules_literal_length CHECK (char_length(literal) <= 512)
+  rule_type text NOT NULL,
+  -- valueは入力表記そのまま。literalのcase-sensitive照合とassignment_keyのkey表記保持に使う。
+  value text NOT NULL,
+  -- literalはvalueそのまま、assignment_keyはcase-insensitive照合のためlower(value)を正規化に使う。
+  normalized_value text NOT NULL,
+  PRIMARY KEY (company_id, rule_type, normalized_value),
+  CONSTRAINT company_redaction_rules_rule_type CHECK (rule_type IN ('literal', 'assignment_key')),
+  CONSTRAINT company_redaction_rules_value_not_empty CHECK (value <> ''),
+  CONSTRAINT company_redaction_rules_normalized_value CHECK (
+    (rule_type = 'literal' AND normalized_value = value)
+    OR (rule_type = 'assignment_key' AND normalized_value = lower(value))
+  ),
+  CONSTRAINT company_redaction_rules_literal_not_placeholder_fragment CHECK (
+    rule_type <> 'literal' OR NOT yori_is_redaction_placeholder_fragment(value)
+  ),
+  CONSTRAINT company_redaction_rules_assignment_key_identifier CHECK (
+    rule_type <> 'assignment_key' OR value ~ '^[A-Za-z_][A-Za-z0-9_.-]*$'
+  ),
+  CONSTRAINT company_redaction_rules_assignment_key_not_redacted CHECK (
+    rule_type <> 'assignment_key' OR lower(value) <> 'redacted'
+  ),
+  CONSTRAINT company_redaction_rules_literal_length CHECK (rule_type <> 'literal' OR char_length(value) <= 512),
+  CONSTRAINT company_redaction_rules_assignment_key_length CHECK (rule_type <> 'assignment_key' OR char_length(value) <= 128)
 );
 
 CREATE OR REPLACE FUNCTION company_redaction_rules_enforce_limit() RETURNS trigger AS $$
