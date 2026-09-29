@@ -168,29 +168,25 @@ docker compose --env-file /etc/yori/yori.env -f deployment/compose.yaml --profil
 {
   "company_id": "<uuid>",
   "expected_version": 0,
-  "rules": [
-    { "type": "literal", "value": "example-literal" },
-    { "type": "assignment_key", "value": "example_token" }
-  ]
+  "values": ["example-literal", "example-project-name"]
 }
 ```
 
-- `rules` は `literal` と `assignment_key` のdiscriminated unionで、合算最大100件。旧string rule・unknown type・unknown field・空文字は `invalid_input`。
-- `literal` はexact・case-sensitive、最大512 code points。重複（case違いは別rule）と、既知placeholder（`[REDACTED:custom]`等）の部分文字列を拒否する。regexは受け付けない。
-- `assignment_key` はASCII identifier `/^[A-Za-z_][A-Za-z0-9_.-]*$/` のみ、最大128 code points。`redacted` は拒否し、大文字小文字を無視した重複も拒否する。
-- `assignment_key` は代入のkey名に `:`・`=`・`：` のいずれかが続く箇所を対象にし、keyと区切りは保持してvalueだけを `[REDACTED:custom]` へ置換する。`compass`・`bypass`・`DB_PASS` のように前後がidentifier文字へ連なる部分一致は対象にしない。
-- 適用順はcustom `assignment_key` → built-in → custom `literal`。built-inの伏せ字（`PASS`・全角colonを含む代入、token、secret等）は常に有効で、custom ruleから無効化できない。
-- `expected_version` が0のときだけpolicy行を作りversionは1になる。既存policyへは一致時だけ置換しversionを1増やす。不一致は `redaction_policy_conflict`、会社が無ければ `company_not_found`。失敗時はversion・rulesとも変更しない。
-- 入力JSONはrepository外のpathでもよく、rule値をargvへ出さない。delete+insert+version incrementは1 transactionで行い、途中失敗時はrollbackする。
+- `values` は伏せ字対象のliteral文字列だけを最大100件。各1〜512 code pointsで、exact・case-sensitiveに一致する（case違いは別の値）。
+- 空文字・重複・既知placeholder（`[REDACTED:custom]`等）の部分文字列は `invalid_input`。regexは受け付けず、`rules` field・object形式のrule・`keys`/`assignment_keys` fieldなど旧形式や未知fieldも `invalid_input`。
+- built-inの代入伏せ字（`PASS`・`PASSWORD`・`PASSWD`・`SECRET`・`TOKEN`・`KEY`・`APIKEY`・`CREDENTIAL`と区切り `:`・`=`・`：`）は設定不要で常に有効。custom CLIへ登録するのは、built-inで拾えない値・固有名詞そのものだけにする。
+- built-in `PASS` は前後がidentifier文字の部分一致を対象にしない。`compass`・`bypass`・`DB_PASS` 等を伏せたい場合はcustom `values` へ明示する。
+- `expected_version` が0のときだけpolicy行を作りversionは1になる。既存policyへは一致時だけ全置換しversionを1増やす。不一致は `redaction_policy_conflict`、会社が無ければ `company_not_found`。失敗時はversion・valuesとも変更しない。
+- 入力JSONはrepository外のpathでもよく、値をargvへ出さない。delete+insert+version incrementは1 transactionで行い、途中失敗時はrollbackする。
 
 成功出力例: `{"status":"replaced","company_id":"<uuid>","version":1}`
 
 ### `redaction:list <company-id>`
 
-会社のcurrent policyを`rule_type`・`normalized_value`の決定的順でtyped ruleとして返す。policy未登録の会社はversion 0・rules空。
+会社のcurrent policyをvalue昇順のliteral一覧として返す。policy未登録の会社はversion 0・values空。
 
 ```json
-{"version":1,"rules":[{"type":"assignment_key","value":"example_token"},{"type":"literal","value":"example-literal"}]}
+{"version":1,"values":["example-literal","example-project-name"]}
 ```
 
 生token・token hash・DB URLは返さない。
