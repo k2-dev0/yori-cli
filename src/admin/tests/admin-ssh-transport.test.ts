@@ -16,10 +16,13 @@ import {
 
 // DATABASE_URLなしのredaction:replace / redaction:listだけが /usr/bin/ssh yori-production bash -s へ委ね、
 // 合成したbash scriptだけをstdinへ渡す。実ssh・実host・実networkへは接続しない。
+// remote composeにcli serviceは無いため、tools profileのmigrate serviceを--entrypoint npxで
+// 一時Node環境として上書きし、migrationは実行しない。
 // inspect・company:create等の他のadmin commandはDATABASE_URL欠落をinvalid_admin_configのまま拒否する。
-// policy text等の入力はstdin script内だけに置き、argv・エラー出力・logへ出さない。
+// policy text等の入力は0600の一時fileを含むstdin script内だけに置き、argv・エラー出力・logへ出さない。
 const SSH_HOST = 'yori-production';
 const COMPANY_ID = '01930000-0000-7000-8000-000000000042';
+const OTHER_COMPANY_ID = '01930000-0000-7000-8000-000000000099';
 
 function cliVersion(): string {
   const parsed = JSON.parse(readFileSync(path.join(REPO_ROOT, 'package.json'), 'utf8')) as { version: string };
@@ -57,14 +60,54 @@ async function runTransport(
   });
 }
 
-function assertRemoteScript(stdin: string, fragments: string[]): void {
-  for (const fragment of fragments) {
-    assert.ok(stdin.includes(fragment), `ssh stdin scriptへ ${fragment} がない: ${JSON.stringify(stdin)}`);
+// 生成scriptが存在しないpath/serviceを参照していたら失敗させる。
+// remote composeにcli serviceは無いため、docker compose runのserviceはmigrateだけを許可する。
+function assertRemoteReferencesExist(stdin: string): void {
+  const composeLines = stdin.split('\n').filter((line) => line.includes('docker compose'));
+  assert.equal(composeLines.length, 1, `docker compose commandが1つではない: ${JSON.stringify(stdin)}`);
+  const composeLine = composeLines[0] as string;
+  assert.match(
+    composeLine,
+    /^sudo docker compose -p yori --env-file \/etc\/yori\/yori\.env -f deployment\/compose\.yaml --profile tools run --rm --no-deps -T /,
+    `既知のcompose commandではない: ${JSON.stringify(composeLine)}`,
+  );
+  const afterRun = composeLine.replace(/^.*run --rm --no-deps -T /, '');
+  const withoutMount = afterRun.replace(/^--volume "\$input:\/input\/redaction\.json:ro" /, '');
+  assert.match(
+    withoutMount,
+    /^--entrypoint npx migrate(?: |$)/,
+    `service migrateのnpx起動ではない: ${JSON.stringify(composeLine)}`,
+  );
+  assert.ok(!/(?:^|\s)cli(?:\s|$)/.test(afterRun), `存在しないcli serviceを参照している: ${JSON.stringify(composeLine)}`);
+  for (const missing of ['/srv/yori-cli', 'compose.npx.yaml']) {
+    assert.ok(!stdin.includes(missing), `存在しないpathを参照している: ${missing}`);
   }
-  assert.match(stdin, /--profile[= ]tools/, `tools profile指定がない: ${JSON.stringify(stdin)}`);
-  assert.ok(/docker compose/.test(stdin), `docker composeがない: ${JSON.stringify(stdin)}`);
-  assert.ok(stdin.includes('migrate'), `tools profileのmigrate serviceがない: ${JSON.stringify(stdin)}`);
-  assert.match(stdin, /run\s+--rm\s+--no-deps\s+-T/, `run --rm --no-deps -Tがない: ${JSON.stringify(stdin)}`);
+}
+
+// 本番serverの配置 (/srv/yori)・env file・project yori・deployment/compose.yaml・
+// tools profileのmigrate serviceをnpxで上書きする1回だけのcompose runを検査する。
+function assertComposeContract(stdin: string): void {
+  assert.ok(stdin.includes('cd /srv/yori'), `cd /srv/yoriがない: ${JSON.stringify(stdin)}`);
+  assert.ok(stdin.includes('/etc/yori/yori.env'), `env fileがない: ${JSON.stringify(stdin)}`);
+  assert.ok(stdin.includes('deployment/compose.yaml'), `deployment/compose.yamlがない: ${JSON.stringify(stdin)}`);
+  assert.ok(!stdin.includes('compose.npx.yaml'), '旧compose.npx.yamlを使っている');
+  assert.ok(!stdin.includes('/srv/yori-cli'), '旧/srv/yori-cli配置を使っている');
+  assert.match(stdin, /docker compose -p yori /, `project yoriがない: ${JSON.stringify(stdin)}`);
+  assert.match(stdin, /--profile tools run --rm --no-deps -T/, `tools run --rm --no-deps -Tがない: ${JSON.stringify(stdin)}`);
+  assert.ok(!stdin.includes('run --rm --no-deps -T migrate'), `migrationを先に実行している: ${JSON.stringify(stdin)}`);
+  assertRemoteReferencesExist(stdin);
+}
+
+// replaceだけがpolicy JSONを0600の一時fileへ置き、trapで削除してread-only mountし、
+// CLIへはcontainer pathだけを渡す（host temp pathをargvへ出さない）。
+function assertReplaceTempInputContract(stdin: string): void {
+  assert.match(stdin, /input=\$\(mktemp\)/, `mktempがない: ${JSON.stringify(stdin)}`);
+  assert.match(stdin, /chmod 600 "\$input"/, `0600指定がない: ${JSON.stringify(stdin)}`);
+  assert.match(stdin, /trap 'rm -f "\$input"' EXIT/, `trap cleanupがない: ${JSON.stringify(stdin)}`);
+  assert.match(stdin, /--volume "\$input:\/input\/redaction\.json:ro"/, `read-only input mountがない: ${JSON.stringify(stdin)}`);
+  assert.match(stdin, /'redaction:replace' '\/input\/redaction\.json'/, `temp inputのcontainer pathをCLIへ渡していない: ${JSON.stringify(stdin)}`);
+  assert.ok(!stdin.includes(`'redaction:replace' "$input"`), 'host temp pathをCLI引数へ渡している');
+  assert.ok(!stdin.includes(`'redaction:replace' '$input'`), 'host temp pathをCLI引数へ渡している');
 }
 
 describe('admin commandのmacOS SSH transport', () => {
@@ -89,7 +132,7 @@ describe('admin commandのmacOS SSH transport', () => {
     assert.equal(invalidArguments.invocationCount, 0, 'inspectが引数検証より先にsshを起動している');
   });
 
-  it('redaction:replaceのpolicy textはssh stdin scriptだけへ置き、argv・stdout・stderrへ出さない', async () => {
+  it('redaction:replaceのpolicy textは0600一時fileとssh stdin scriptだけへ置き、argv・stdout・stderrへ出さない', async () => {
     const input = {
       company_id: COMPANY_ID,
       expected_version: 0,
@@ -104,7 +147,14 @@ describe('admin commandのmacOS SSH transport', () => {
 
     assert.equal(run.code, 0, `終了コードが0ではない: stderr=${run.stderr}`);
     assert.equal(invocationCount, 1);
-    assertRemoteScript(stdin, [`yori-cli@${cliVersion()}`, 'redaction:replace', 'synthetic-field-marker', 'synthetic-term-marker', 'block']);
+    assert.deepEqual(args, [SSH_HOST, 'bash', '-s'], `ssh argvが変わっている: ${JSON.stringify(args)}`);
+    assertComposeContract(stdin);
+    assertReplaceTempInputContract(stdin);
+    assert.ok(
+      stdin.includes(`'--package=yori-cli@${cliVersion()}'`),
+      `固定package versionのexact指定がない: ${JSON.stringify(stdin)}`,
+    );
+    assert.ok(stdin.includes('synthetic-field-marker') && stdin.includes('synthetic-term-marker'), 'policy textがssh stdin scriptへない');
     for (const forbidden of ['synthetic-field-marker', 'synthetic-term-marker']) {
       assert.ok(!args.join(' ').includes(forbidden), `ssh argvへpolicy textが出ている: ${forbidden}`);
       assert.ok(!run.stdout.includes(forbidden), `stdoutへpolicy textが出ている: ${forbidden}`);
@@ -112,17 +162,83 @@ describe('admin commandのmacOS SSH transport', () => {
     }
   });
 
-  it('redaction:listをssh scriptへ委ね、remote JSONをそのまま返す', async () => {
-    const remoteStdout = `{"version":2,"fields":["Pass_Key"],"terms":["alpha-term"],"suspicion_mode":"block","detector_version":"initial-v1"}\n`;
+  it('redaction:listをssh scriptへ委ね、company UUIDを渡してremote JSONを検証・昇順化して返す', async () => {
+    const remoteStdout = `{"version":2,"fields":["pass_key","Pass"],"terms":["beta-term","alpha-term"],"suspicion_mode":"block","detector_version":"initial-v1"}\n`;
     const { run, stdin, invocationCount } = await runTransport(['redaction:list', COMPANY_ID], {
       response: { stdout: remoteStdout },
     });
 
     assert.equal(run.code, 0, `終了コードが0ではない: stderr=${run.stderr}`);
-    assert.deepEqual(JSON.parse(run.stdout), JSON.parse(remoteStdout));
+    assert.deepEqual(JSON.parse(run.stdout), {
+      version: 2,
+      fields: ['Pass', 'pass_key'],
+      terms: ['alpha-term', 'beta-term'],
+      suspicion_mode: 'block',
+      detector_version: 'initial-v1',
+    });
     assert.equal(invocationCount, 1);
-    assertRemoteScript(stdin, [`yori-cli@${cliVersion()}`, '/srv/yori', '/etc/yori/yori.env', 'redaction:list', COMPANY_ID]);
+    assertComposeContract(stdin);
+    assert.ok(stdin.includes(`'${COMPANY_ID}'`), `company UUIDをCLIへ渡していない: ${JSON.stringify(stdin)}`);
+    assert.ok(!stdin.includes('mktemp'), 'listが一時fileを作成している');
+    assert.ok(
+      stdin.includes(`'--package=yori-cli@${cliVersion()}'`),
+      `固定package versionのexact指定がない: ${JSON.stringify(stdin)}`,
+    );
     assert.ok(!stdin.includes('postgres://'), 'ssh stdin scriptへDB URLを出している');
+  });
+
+  it('redaction:replaceのremote応答は契約外のJSONをinternal_errorで拒否する', async () => {
+    const input = { company_id: COMPANY_ID, expected_version: 0, fields: [], terms: [], suspicion_mode: 'observe' };
+    const invalidOutputs: { label: string; stdout: string }[] = [
+      { label: 'extra key', stdout: JSON.stringify({ status: 'replaced', company_id: COMPANY_ID, version: 1, extra: true }) },
+      { label: 'version欠落', stdout: JSON.stringify({ status: 'replaced', company_id: COMPANY_ID }) },
+      { label: 'status違い', stdout: JSON.stringify({ status: 'ok', company_id: COMPANY_ID, version: 1 }) },
+      { label: '別会社', stdout: JSON.stringify({ status: 'replaced', company_id: OTHER_COMPANY_ID, version: 1 }) },
+      { label: 'version不一致', stdout: JSON.stringify({ status: 'replaced', company_id: COMPANY_ID, version: 2 }) },
+      { label: '非object', stdout: JSON.stringify(['replaced', COMPANY_ID, 1]) },
+    ];
+    for (const invalid of invalidOutputs) {
+      const { run, invocationCount } = await runTransport(['redaction:replace'], {
+        input: { name: 'redaction.json', content: input },
+        response: { stdout: `${invalid.stdout}\n` },
+      });
+      assert.equal(invocationCount, 1, `${invalid.label} でssh回数が違う`);
+      assert.equal(run.code, 1, `${invalid.label} が成功している: stdout=${run.stdout}`);
+      assert.equal(run.stdout, '', `${invalid.label} の応答をstdoutへ出している`);
+      assert.equal(run.stderr, 'admin: internal_error\n', `${invalid.label} の固定codeが違う: ${run.stderr}`);
+      assert.ok(!run.stdout.includes(COMPANY_ID) && !run.stderr.includes(COMPANY_ID), `${invalid.label} の応答値を出している`);
+    }
+  });
+
+  it('redaction:listのremote応答は契約外のJSONをinternal_errorで拒否する', async () => {
+    const valid = { version: 0, fields: [], terms: [], suspicion_mode: 'observe', detector_version: 'initial-v1' };
+    const invalidOutputs: { label: string; stdout: string }[] = [
+      { label: 'extra key', stdout: JSON.stringify({ ...valid, extra: true }) },
+      { label: 'detector_version欠落', stdout: JSON.stringify({ version: 0, fields: [], terms: [], suspicion_mode: 'observe' }) },
+      { label: 'detector_version違い', stdout: JSON.stringify({ ...valid, detector_version: 'v2' }) },
+      { label: 'suspicion_mode違い', stdout: JSON.stringify({ ...valid, suspicion_mode: 'warn' }) },
+      { label: 'fields非配列', stdout: JSON.stringify({ ...valid, fields: 'none' }) },
+      { label: 'version非整数', stdout: JSON.stringify({ ...valid, version: 0.5 }) },
+      { label: 'field identifier', stdout: JSON.stringify({ ...valid, fields: ['1bad'] }) },
+      { label: 'field 129cp', stdout: JSON.stringify({ ...valid, fields: ['a'.repeat(129)] }) },
+      { label: 'field case重複', stdout: JSON.stringify({ ...valid, fields: ['dup_field_MARKER', 'DUP_FIELD_MARKER'] }) },
+      { label: 'term placeholder', stdout: JSON.stringify({ ...valid, terms: ['[REDACTED:jwt]'] }) },
+      { label: 'term business_value', stdout: JSON.stringify({ ...valid, terms: ['business_value'] }) },
+      { label: 'term colon', stdout: JSON.stringify({ ...valid, terms: ['a:b'] }) },
+      { label: 'term重複', stdout: JSON.stringify({ ...valid, terms: ['dup-term-marker', 'dup-term-marker'] }) },
+      {
+        label: 'rules 101件',
+        stdout: JSON.stringify({ ...valid, fields: Array.from({ length: 101 }, (_, index) => `field_${String(index).padStart(3, '0')}`) }),
+      },
+      { label: 'JSON以外', stdout: 'admin: not-json\n' },
+    ];
+    for (const invalid of invalidOutputs) {
+      const { run, invocationCount } = await runTransport(['redaction:list', COMPANY_ID], { response: { stdout: `${invalid.stdout}\n` } });
+      assert.equal(invocationCount, 1, `${invalid.label} でssh回数が違う`);
+      assert.equal(run.code, 1, `${invalid.label} が成功している: stdout=${run.stdout}`);
+      assert.equal(run.stdout, '', `${invalid.label} の応答をstdoutへ出している`);
+      assert.equal(run.stderr, 'admin: internal_error\n', `${invalid.label} の固定codeが違う: ${run.stderr}`);
+    }
   });
 
   it('remoteの固定admin codeをそのまま返し、raw error本文を出さない', async () => {
@@ -219,5 +335,4 @@ describe('admin commandのmacOS SSH transport', () => {
       }
     });
   });
-
 });
