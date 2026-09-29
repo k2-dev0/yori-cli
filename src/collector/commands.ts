@@ -30,6 +30,13 @@ import {
 import { writeFileAtomic } from './fs.js';
 import { deleteKeychainToken, ensureKeychainToken, readKeychainToken } from './keychain.js';
 import {
+  listCollectorSecrets,
+  removeCollectorSecret,
+  storeCollectorSecret,
+  type CollectorSecretListOutput,
+  type CollectorSecretOutput,
+} from './secrets.js';
+import {
   collectorConfigPath,
   collectorHome,
   collectorHookPath,
@@ -344,7 +351,53 @@ async function uninstallCollector(env: NodeJS.ProcessEnv): Promise<CollectorComm
   return successOutput('uninstalled', installed?.collector_version ?? null, agents, { keychain: true, hooks: true });
 }
 
-export async function runCollectorCommand(command: string, env: NodeJS.ProcessEnv): Promise<AdminResult<CollectorCommandOutput | CollectorDoctorOutput>> {
+type CollectorCommandResult =
+  | CollectorCommandOutput
+  | CollectorDoctorOutput
+  | CollectorSecretOutput
+  | CollectorSecretListOutput;
+
+// collector:secret:add/list/remove。値はKeychainだけへ置き、indexはlabelだけを持つ。
+async function runCollectorSecretCommand(
+  command: string,
+  args: readonly string[],
+  env: NodeJS.ProcessEnv,
+): Promise<CollectorSecretOutput | CollectorSecretListOutput> {
+  if (command === 'collector:secret:list') {
+    if (args.length !== 0) {
+      throw new CollectorFailure('collector_invalid_request');
+    }
+    return await listCollectorSecrets(env);
+  }
+  if (command === 'collector:secret:remove') {
+    if (args.length !== 1) {
+      throw new CollectorFailure('collector_invalid_request');
+    }
+    return await removeCollectorSecret(env, args[0]);
+  }
+  if (args.length === 1) {
+    // 非表示promptはsecurity -wへ委ね、CLIはstdinを読まない。
+    return await storeCollectorSecret(env, args[0], null);
+  }
+  if (args.length === 3 && args[1] === '--from-env') {
+    // --from-envの値だけをsecurityのstdin経由で渡し、argv・stdoutへ出さない。
+    // security子processは親envを継承するため、値を読んだ直後に元の環境変数を削除する。
+    const name = args[2];
+    const value = env[name];
+    if (value === undefined) {
+      throw new CollectorFailure('collector_invalid_request');
+    }
+    delete env[name];
+    return await storeCollectorSecret(env, args[0], value);
+  }
+  throw new CollectorFailure('collector_invalid_request');
+}
+
+export async function runCollectorCommand(
+  command: string,
+  args: readonly string[],
+  env: NodeJS.ProcessEnv,
+): Promise<AdminResult<CollectorCommandResult>> {
   if (!isSupportedCollectorPlatform(process.platform)) {
     return { ok: false, code: 'unsupported_platform' };
   }
@@ -358,6 +411,10 @@ export async function runCollectorCommand(command: string, env: NodeJS.ProcessEn
         return { ok: true, value: await doctorCollector(env) };
       case 'collector:uninstall':
         return { ok: true, value: await uninstallCollector(env) };
+      case 'collector:secret:add':
+      case 'collector:secret:list':
+      case 'collector:secret:remove':
+        return { ok: true, value: await runCollectorSecretCommand(command, args, env) };
       default:
         return { ok: false, code: 'invalid_arguments' };
     }
