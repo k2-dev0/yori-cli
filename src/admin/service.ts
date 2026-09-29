@@ -16,6 +16,7 @@ import {
   type MemberRemoveOutput,
   type ProjectCreateInput,
   type ProjectCreateOutput,
+  type CustomRedactionRule,
   type RedactionListOutput,
   type RedactionReplaceInput,
   type RedactionReplaceOutput,
@@ -27,7 +28,7 @@ import {
   type TokenRevokeInput,
   type TokenRevokeOutput,
 } from './contract.js';
-import { isValidCustomRedactionRules } from './redaction-rules.js';
+import { validateCustomRedactionRules, type ValidatedRedactionRule } from './redaction-rules.js';
 import { generateAuthToken, hashAuthToken } from './token.js';
 
 export interface TokenIssueOptions {
@@ -451,15 +452,24 @@ export async function inspectCompany(pool: Pool, companyId: string): Promise<Adm
   });
 }
 
-async function insertRedactionRules(client: PoolClient, companyId: string, rules: readonly string[]): Promise<void> {
+async function insertRedactionRules(client: PoolClient, companyId: string, rules: readonly ValidatedRedactionRule[]): Promise<void> {
   for (const rule of rules) {
-    await client.query('INSERT INTO company_redaction_rules (company_id, literal) VALUES ($1, $2)', [companyId, rule]);
+    await client.query('INSERT INTO company_redaction_rules (company_id, rule_type, value, normalized_value) VALUES ($1, $2, $3, $4)', [
+      companyId,
+      rule.rule.type,
+      rule.rule.value,
+      rule.normalized_value,
+    ]);
   }
 }
 
 // 会社のcurrent policyをCASで置換する。初回だけexpected_version 0を受ける。
 export async function replaceRedactionPolicy(pool: Pool, input: RedactionReplaceInput): Promise<AdminResult<RedactionReplaceOutput>> {
-  if (!isValidCustomRedactionRules(input.rules)) {
+  // Zodで構造を検証済みでも、placeholder・重複・正規化はboundary validatorを通してからDBへ渡す。
+  let validated: ValidatedRedactionRule[];
+  try {
+    validated = validateCustomRedactionRules(input.rules);
+  } catch {
     return { ok: false, code: 'invalid_input' };
   }
   return withTransaction(
@@ -478,14 +488,14 @@ export async function replaceRedactionPolicy(pool: Pool, input: RedactionReplace
           return { ok: false, code: 'redaction_policy_not_found' };
         }
         await client.query('INSERT INTO company_redaction_policies (company_id, version) VALUES ($1, 1)', [input.company_id]);
-        await insertRedactionRules(client, input.company_id, input.rules);
+        await insertRedactionRules(client, input.company_id, validated);
         return { ok: true, value: { status: 'replaced', company_id: input.company_id, version: 1 } };
       }
       if (row.version !== input.expected_version) {
         return { ok: false, code: 'redaction_policy_conflict' };
       }
       await client.query('DELETE FROM company_redaction_rules WHERE company_id = $1', [input.company_id]);
-      await insertRedactionRules(client, input.company_id, input.rules);
+      await insertRedactionRules(client, input.company_id, validated);
       const nextVersion = row.version + 1;
       await client.query('UPDATE company_redaction_policies SET version = $2, updated_at = now() WHERE company_id = $1', [
         input.company_id,
@@ -506,23 +516,25 @@ export async function listRedactionPolicy(pool: Pool, companyId: string): Promis
       if (company.rows.length === 0) {
         return { ok: false, code: 'company_not_found' };
       }
-      // listはliteral順で決定的に返す。
-      const result = await client.query<{ version: number; literal: string | null }>(
-        `SELECT p.version, r.literal
+      // listはrule_type, normalized_valueの決定的順でtyped rulesを返す。
+      const result = await client.query<{ version: number; rule_type: string | null; value: string | null }>(
+        `SELECT p.version, r.rule_type, r.value
            FROM company_redaction_policies p
            LEFT JOIN company_redaction_rules r ON r.company_id = p.company_id
           WHERE p.company_id = $1
-          ORDER BY r.literal`,
+          ORDER BY r.rule_type, r.normalized_value`,
         [companyId],
       );
       const first = result.rows[0];
       if (first === undefined) {
         return { ok: true, value: { version: 0, rules: [] } };
       }
-      return {
-        ok: true,
-        value: { version: first.version, rules: result.rows.flatMap((row) => (row.literal === null ? [] : [row.literal])) },
-      };
+      const rules = result.rows.flatMap((row): CustomRedactionRule[] =>
+        row.rule_type === 'literal' || row.rule_type === 'assignment_key' ? [{ type: row.rule_type, value: row.value as string }] : [],
+      );
+      // DB制約で防いでいても、読み出し境界で不正ruleを適用しない。
+      validateCustomRedactionRules(rules);
+      return { ok: true, value: { version: first.version, rules } };
     },
     [REQUIRED_MIGRATION, REDACTION_MIGRATION],
   );
