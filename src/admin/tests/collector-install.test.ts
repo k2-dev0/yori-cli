@@ -527,32 +527,46 @@ describe('collector:install', () => {
     });
   });
 
-  it('setup応答のtyped policy rulesを0010契約で検証し、rule値を失敗出力へ出さない', async () => {
-    const literal = (value: string) => ({ type: 'literal', value });
-    const assignmentKey = (value: string) => ({ type: 'assignment_key', value });
+  it('setup応答のfield/term/suspicion_mode/detector_versionを0010契約で検証し、policy値を失敗出力へ出さない', async () => {
+    const base = { version: 1, fields: [], terms: [], suspicion_mode: 'observe', detector_version: 'initial-v1' };
     interface InvalidSetup {
-      rules: unknown[];
+      policy: Record<string, unknown>;
       repository?: string;
       project_id?: string;
     }
     const invalidSetups: InvalidSetup[] = [
-      { rules: [literal('')] },
-      { rules: [literal('dup-rule-marker'), literal('dup-rule-marker')] },
-      { rules: [literal('[REDACTED:custom]')] },
-      { rules: [literal('[REDACTED:jwt]')] },
-      { rules: [literal('x'.repeat(513))] },
-      { rules: [assignmentKey('dup-key-marker'), assignmentKey('DUP-KEY-MARKER')] },
-      { rules: [assignmentKey('1pass')] },
-      { rules: [assignmentKey('pass key')] },
-      { rules: [assignmentKey('REDACTED')] },
-      { rules: [assignmentKey('a'.repeat(129))] },
-      { rules: Array.from({ length: 101 }, (_, index) => literal(`over-${index}`)) },
-      { rules: ['string-rule'] },
-      { rules: [{ type: 'regex', value: 'x' }] },
-      { rules: [{ type: 'literal' }] },
-      { rules: [{ type: 'literal', value: 'ok', extra: true }] },
-      { rules: [literal('ok-rule')], repository: 'github.com/example/other' },
-      { rules: [literal('ok-rule')], project_id: 'not-a-uuid' },
+      { policy: { ...base, fields: ['1bad'] } },
+      { policy: { ...base, fields: ['has space'] } },
+      { policy: { ...base, fields: ['redacted'] } },
+      { policy: { ...base, fields: ['REDACTED'] } },
+      { policy: { ...base, fields: [''] } },
+      { policy: { ...base, fields: [1] } },
+      { policy: { ...base, fields: ['x'.repeat(129)] } },
+      { policy: { ...base, fields: ['dup-field-marker', 'DUP-FIELD-MARKER'] } },
+      { policy: { ...base, terms: [''] } },
+      { policy: { ...base, terms: ['REDACTED'] } },
+      { policy: { ...base, terms: ['[REDACTED:jwt]'] } },
+      { policy: { ...base, terms: ['business_value'] } },
+      { policy: { ...base, terms: ['known_secret'] } },
+      { policy: { ...base, terms: ['x'.repeat(513)] } },
+      { policy: { ...base, terms: ['dup-term-marker', 'dup-term-marker'] } },
+      {
+        policy: {
+          ...base,
+          fields: Array.from({ length: 50 }, (_, index) => `field_${index}`),
+          terms: Array.from({ length: 51 }, (_, index) => `term-${index}`),
+        },
+      },
+      { policy: { ...base, suspicion_mode: 'warn' } },
+      { policy: { ...base, detector_version: 'initial-v2' } },
+      { policy: { ...base, extra: true } },
+      { policy: { ...base, rules: [{ type: 'literal', value: 'old-literal' }] } },
+      { policy: { ...base, fields: 'not-array' } },
+      { policy: { version: 1, terms: [], suspicion_mode: 'observe', detector_version: 'initial-v1' } },
+      { policy: { version: 1, fields: [], terms: [] } },
+      { policy: { version: 1 } },
+      { policy: base, repository: 'github.com/example/other' },
+      { policy: base, project_id: 'not-a-uuid' },
     ];
     for (const invalid of invalidSetups) {
       await withCollectorFixture(async (fixture) => {
@@ -562,26 +576,26 @@ describe('collector:install', () => {
           body: {
             project_id: invalid.project_id ?? '01930000-0000-7000-8000-000000000001',
             repository: invalid.repository ?? 'github.com/example/repo',
-            redaction_policy: { version: 1, rules: invalid.rules },
+            redaction_policy: invalid.policy,
           },
         }]);
         const run = await runRootCli(fixture, ['collector:install']);
         assertCollectorFailure(run, [
           DEFAULT_TOKEN,
-          'dup-rule-marker',
-          'dup-key-marker',
-          '[REDACTED:custom]',
+          'dup-field-marker',
+          'dup-term-marker',
           '[REDACTED:jwt]',
-          'string-rule',
+          'business_value',
+          'old-literal',
         ]);
-        assert.equal(run.stderr, 'admin: collector_internal_error\n');
+        assert.equal(run.stderr, 'admin: collector_internal_error\n', `policy契約違反がcollector_internal_errorではない: ${run.stderr}`);
         assert.equal(existsSync(collectorConfigPath(fixture)), false);
         assert.equal(existsSync(collectorInstallRoot(fixture)), false);
       });
     }
   });
 
-  it('typed setupのliteral case違いとassignment_keyを受理してinstallする', async () => {
+  it('setup応答のfield/term/suspicion_modeを受理してinstallし、policy値をinstall stateへ保存しない', async () => {
     await withCollectorFixture(async (fixture) => {
       await prepareCollectorInstall(fixture, {
         tokenRegistered: true,
@@ -592,11 +606,10 @@ describe('collector:install', () => {
             repository: 'github.com/example/repo',
             redaction_policy: {
               version: 5,
-              rules: [
-                { type: 'literal', value: 'Case' },
-                { type: 'literal', value: 'case' },
-                { type: 'assignment_key', value: 'pass_key' },
-              ],
+              fields: ['Pass_Key', 'pass.key'],
+              terms: ['Case', 'case'],
+              suspicion_mode: 'block',
+              detector_version: 'initial-v1',
             },
           },
         },
@@ -606,7 +619,8 @@ describe('collector:install', () => {
       assert.equal(existsSync(collectorConfigPath(fixture)), true);
       const installState = JSON.parse(await readText(path.join(collectorInstallRoot(fixture), 'install.json'))) as Record<string, unknown>;
       assert.equal(installState.policy_version, 5);
-      assert.ok(!JSON.stringify(installState).includes('pass_key'), 'install.jsonへruleを保存している');
+      assert.ok(!JSON.stringify(installState).includes('Pass_Key'), 'install.jsonへpolicy ruleを保存している');
+      assert.ok(!JSON.stringify(installState).includes('pass.key'), 'install.jsonへpolicy ruleを保存している');
     });
   });
 
