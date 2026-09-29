@@ -108,6 +108,7 @@ case "$service" in
       find-generic-password)
         if [ -f "$target" ]; then
           cat "$target"
+          printf '\\n'
         else
           printf '%s\\n' 'security: SecKeychainSearchCopyNext: The specified item could not be found in the keychain.' >&2
           exit 44
