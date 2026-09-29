@@ -128,24 +128,22 @@ export const bootstrapInputSchema = z
     });
   });
 
-// custom伏せ字ruleの上限はyori migration 0010・API境界と同じ。
-// admin CLIの公開inputはliteral valueだけを扱い、assignment_keyはcollector setup内部のtyped unionでのみ検証する。
-export const MAX_CUSTOM_REDACTION_RULES = 100;
-export const MAX_CUSTOM_REDACTION_LITERAL_CODE_POINTS = 512;
-export const MAX_CUSTOM_REDACTION_ASSIGNMENT_KEY_CODE_POINTS = 128;
-// assignment_keyは代入key名のASCII identifierだけを許可する (yori 0010と同じpattern)。
-export const ASSIGNMENT_KEY_IDENTIFIER_PATTERN = /^[A-Za-z_][A-Za-z0-9_.-]*$/;
+// business伏せ字policyの上限・版はyori migration 0010・yori src/api/contract.tsと同じ。
+// admin CLIもcollector setupもfield/term/suspicion_modeだけを公開し、literal等の旧shapeは受けない。
+export const MAX_BUSINESS_REDACTION_RULES = 100;
+export const MAX_BUSINESS_FIELD_CODE_POINTS = 128;
+export const MAX_BUSINESS_TERM_CODE_POINTS = 512;
+export const REDACTION_DETECTOR_VERSION = 'initial-v1';
+export const SUSPICION_MODES = ['observe', 'block'] as const;
+export type SuspicionMode = (typeof SUSPICION_MODES)[number];
+export type DetectorVersion = typeof REDACTION_DETECTOR_VERSION;
 
 export const redactionReplaceInputSchema = z.strictObject({
   company_id: uuid,
   expected_version: z.number().int().min(0),
-  values: z
-    .array(
-      z.string().min(1).refine((value) => [...value].length <= MAX_CUSTOM_REDACTION_LITERAL_CODE_POINTS, {
-        message: `valuesは${MAX_CUSTOM_REDACTION_LITERAL_CODE_POINTS} code points以内にしてください`,
-      }),
-    )
-    .max(MAX_CUSTOM_REDACTION_RULES),
+  fields: z.array(z.string()),
+  terms: z.array(z.string()),
+  suspicion_mode: z.enum(SUSPICION_MODES),
 });
 
 export const repositoryInputSchema = z.strictObject({
@@ -162,10 +160,6 @@ export const tokenIssueInputSchema = z.strictObject({ company_id: uuid, employee
 export const tokenRevokeInputSchema = z.strictObject({ company_id: uuid, token_id: uuid });
 
 export type BootstrapInput = z.infer<typeof bootstrapInputSchema>;
-// collector setupとDB境界で扱う内部typed union。admin公開inputはliteral valueだけを受ける。
-export type CustomRedactionRule =
-  | { type: 'literal'; value: string }
-  | { type: 'assignment_key'; value: string };
 export type RedactionReplaceInput = z.infer<typeof redactionReplaceInputSchema>;
 export type RepositoryInput = z.infer<typeof repositoryInputSchema>;
 export type CompanyCreateInput = z.infer<typeof companyCreateInputSchema>;
@@ -276,11 +270,16 @@ export interface RedactionReplaceOutput {
   version: number;
 }
 
-// listはliteral valueとversionだけを返し、内部のrule_type・normalized_valueは出さない。
-export interface RedactionListOutput {
+// policyはversion・fields・terms・suspicion_mode・detector_versionだけを公開する。
+export interface RedactionPolicy {
   version: number;
-  values: string[];
+  fields: string[];
+  terms: string[];
+  suspicion_mode: SuspicionMode;
+  detector_version: DetectorVersion;
 }
+
+export type RedactionListOutput = RedactionPolicy;
 
 export interface RepositoryAddOutput {
   status: 'created';
