@@ -25,6 +25,18 @@ npx yori-cli collector:install
 | `npx yori-cli collector:doctor` | 秘密を含まない診断（install状態、Keychain、setup APIのcurrent policy version、権限）を表示し、状態を変更しない |
 | `npx yori-cli collector:uninstall` | 追加したhook・config・install rootだけを削除する。Keychainと`~/.yori-collector`は保持し、再installでpromptは出ない |
 
+known secret（会話本文で完全一致させて伏せたい値）は`collector:secret:*`で管理します。
+
+| コマンド | 用途 |
+|---|---|
+| `npx yori-cli collector:secret:add <label>` | securityの非表示promptの値をKeychain（service `online.yori.collector.secret`）へ保存する。`--from-env <ENV_NAME>`は環境変数の値をsecurityのstdin経由で渡す |
+| `npx yori-cli collector:secret:list` | indexにあるlabelだけを昇順で表示する。値は表示しない |
+| `npx yori-cli collector:secret:remove <label>` | 指定labelのKeychain itemとindex entryだけを削除する |
+
+- indexは`~/.yori-collector/secrets.json`のlabels-only JSON array（labelは1〜128 code points、厳密な昇順、0600）。値はKeychainだけへ置き、argv・stdout/stderr・logへ出しません。
+- known secretは8〜4096 code points・最大100件・exact重複なし。保存後の検証・index書き込みに失敗した場合はKeychain itemを元へ戻して拒否します。
+- stable launcherはindexのlabel順にKeychain値だけを合成し、子collectorへ`YORI_KNOWN_SECRETS_JSON`としてだけ渡します（親envの同名値は上書き）。index不正・item欠落・値の制限違反は子を起動せず`collector: launcher_error`でfail-closedします。
+
 ## 実行方法
 
 ```sh
@@ -57,14 +69,17 @@ DATABASE_URL='<database-url>' npm run --silent yori -- <command> [argument]
 | `token:issue <file.json>` | 指定した社員の認証トークンを発行する |
 | `token:revoke <file.json>` | 認証トークンを失効させる |
 | `inspect <company-uuid>` | 指定した会社の社員、案件、案件メンバー、認証トークンを表示する |
-| `redaction:replace <file.json>` | 会社のcustom伏せ字valuesを置換する（詳細は[docs/admin.md](docs/admin.md)） |
-| `redaction:list <company-uuid>` | 会社のcustom伏せ字valuesを表示する（詳細は[docs/admin.md](docs/admin.md)） |
+| `redaction:replace <file.json>` | 会社のcustom伏せ字fields/terms policyを置換する（詳細は[docs/admin.md](docs/admin.md)） |
+| `redaction:list <company-uuid>` | 会社のcustom伏せ字fields/terms policyを表示する（詳細は[docs/admin.md](docs/admin.md)） |
 | `project:repository:add <file.json>` | 案件へcanonical repository aliasを追加する（詳細は[docs/admin.md](docs/admin.md)） |
 | `project:repository:remove <file.json>` | 案件からrepository aliasを削除する（詳細は[docs/admin.md](docs/admin.md)） |
 | `collector:install` | 社員端末へcollectorを導入する（`DATABASE_URL`不要） |
 | `collector:update` | collector artifactを検証して切り替える（`DATABASE_URL`不要） |
 | `collector:doctor` | collector導入状態を秘密なしで診断する（`DATABASE_URL`不要） |
 | `collector:uninstall` | collectorの所有entry・config・install rootを削除する（`DATABASE_URL`不要） |
+| `collector:secret:add <label>` | known secretをKeychainへ保存する（`--from-env <ENV_NAME>`、`DATABASE_URL`不要） |
+| `collector:secret:list` | known secretのlabelだけを昇順で表示する（`DATABASE_URL`不要） |
+| `collector:secret:remove <label>` | 指定labelのKeychain itemとindex entryだけを削除する（`DATABASE_URL`不要） |
 
 ## コマンドごとの入出力
 
