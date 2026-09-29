@@ -1,87 +1,115 @@
 import {
-  ASSIGNMENT_KEY_IDENTIFIER_PATTERN,
-  MAX_CUSTOM_REDACTION_ASSIGNMENT_KEY_CODE_POINTS,
-  MAX_CUSTOM_REDACTION_LITERAL_CODE_POINTS,
-  MAX_CUSTOM_REDACTION_RULES,
-  type CustomRedactionRule,
+  MAX_BUSINESS_FIELD_CODE_POINTS,
+  MAX_BUSINESS_REDACTION_RULES,
+  MAX_BUSINESS_TERM_CODE_POINTS,
+  REDACTION_DETECTOR_VERSION,
+  SUSPICION_MODES,
+  type RedactionPolicy,
 } from './contract.js';
 
 // yori migration 0010のyori_is_redaction_placeholder_fragment()と同じ集合。
-export const CUSTOM_REDACTION_PLACEHOLDER_FRAGMENTS = [
-  '[REDACTED:custom]',
-  '[REDACTED:private_key]',
-  '[REDACTED:aws_access_key]',
-  '[REDACTED:google_api_key]',
-  '[REDACTED:github_token]',
-  '[REDACTED:slack_token]',
-  '[REDACTED:openai_key]',
-  '[REDACTED:jwt]',
-  '[REDACTED:url_credentials]',
-  '[REDACTED:authorization]',
-  '[REDACTED:env_value]',
-] as const;
+// termがplaceholderの構文・種類名そのものなら、置換済み本文の再適用でplaceholderを壊すため拒否する。
+const PLACEHOLDER_KINDS = new Set([
+  'private_key',
+  'aws_access_key',
+  'google_api_key',
+  'github_token',
+  'slack_token',
+  'openai_key',
+  'jwt',
+  'url_credentials',
+  'authorization',
+  'env_value',
+  'business_value',
+  'business_term',
+  'known_secret',
+]);
 
-// literalが既知placeholderの部分文字列なら、置換済み本文の再適用でplaceholderを壊すため拒否する。
-export function isRedactionPlaceholderFragment(rule: string): boolean {
-  return CUSTOM_REDACTION_PLACEHOLDER_FRAGMENTS.some((placeholder) => placeholder.includes(rule));
+function isRedactionPlaceholderFragment(value: string): boolean {
+  return value === 'REDACTED' || value.includes('[') || value.includes(']') || value.includes(':') || PLACEHOLDER_KINDS.has(value);
 }
 
-// DBへ渡すruleと正規化値。literalはcase-sensitive、assignment_keyはlower(value)で一意性を判定する。
-export interface ValidatedRedactionRule {
-  rule: CustomRedactionRule;
-  normalized_value: string;
+// yori src/api/redaction.ts:validateRedactionPolicy と同じfield identifier。
+const FIELD_IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_.-]*$/;
+
+function codePointLength(value: string): number {
+  return [...value].length;
 }
 
-// yori src/api/redaction.ts:validateCustomRedactionRules と同じ境界検証。
-// 旧string rule・discriminated union以外・unknown field・空・placeholder部分文字列・上限超過・
-// 不正identifier・REDACTED・type別重複（assignment_keyはcase-insensitive）を拒否する。
-export function validateCustomRedactionRules(rules: unknown): ValidatedRedactionRule[] {
-  if (!Array.isArray(rules) || rules.length > MAX_CUSTOM_REDACTION_RULES) {
-    throw new Error('custom伏せ字ruleの件数が不正です');
+// DBのtextへ格納できないNULと単独サロゲートを境界で拒否する (src/admin/contract.tsと同じ規則)。
+function isStorableTerm(value: string): boolean {
+  return value.length > 0 && !value.includes('\u0000') && !/[\uD800-\uDFFF]/u.test(value);
+}
+
+// 会社のbusiness伏せ字policyを境界検証する。fields/terms合算上限・identifier・placeholder断片・
+// 長さ・exact重複 (fieldはcase-insensitive)・suspicion_mode・detector_versionを満たさないpolicyは適用しない。
+export function validateRedactionPolicy(policy: unknown): RedactionPolicy {
+  if (typeof policy !== 'object' || policy === null || Array.isArray(policy)) {
+    throw new Error('redaction policyが不正です');
   }
-  const seenLiterals = new Set<string>();
-  const seenAssignmentKeys = new Set<string>();
-  const validated: ValidatedRedactionRule[] = [];
-  for (const rule of rules) {
-    if (typeof rule !== 'object' || rule === null || Array.isArray(rule)) {
-      throw new Error('custom伏せ字ruleが不正です');
-    }
-    const fields = Object.keys(rule);
-    if (fields.length !== 2 || !fields.includes('type') || !fields.includes('value')) {
-      throw new Error('custom伏せ字ruleが不正です');
-    }
-    const { type, value } = rule as { type?: unknown; value?: unknown };
-    if (typeof value !== 'string') {
-      throw new Error('custom伏せ字ruleが不正です');
-    }
-    if (type === 'literal') {
-      if (
-        value.length === 0 ||
-        isRedactionPlaceholderFragment(value) ||
-        [...value].length > MAX_CUSTOM_REDACTION_LITERAL_CODE_POINTS ||
-        seenLiterals.has(value)
-      ) {
-        throw new Error('custom伏せ字ruleが不正です');
-      }
-      seenLiterals.add(value);
-      validated.push({ rule: { type: 'literal', value }, normalized_value: value });
-      continue;
-    }
-    if (type === 'assignment_key') {
-      const normalized = value.toLowerCase();
-      if (
-        !ASSIGNMENT_KEY_IDENTIFIER_PATTERN.test(value) ||
-        [...value].length > MAX_CUSTOM_REDACTION_ASSIGNMENT_KEY_CODE_POINTS ||
-        normalized === 'redacted' ||
-        seenAssignmentKeys.has(normalized)
-      ) {
-        throw new Error('custom伏せ字ruleが不正です');
-      }
-      seenAssignmentKeys.add(normalized);
-      validated.push({ rule: { type: 'assignment_key', value }, normalized_value: normalized });
-      continue;
-    }
-    throw new Error('custom伏せ字ruleが不正です');
+  const record = policy as Record<string, unknown>;
+  const keys = Object.keys(record);
+  const required = ['version', 'fields', 'terms', 'suspicion_mode', 'detector_version'];
+  if (keys.length !== required.length || !required.every((key) => keys.includes(key))) {
+    throw new Error('redaction policyが不正です');
   }
-  return validated;
+  const { version, fields, terms, suspicion_mode, detector_version } = record;
+  if (typeof version !== 'number' || !Number.isInteger(version) || version < 0) {
+    throw new Error('redaction policyのversionが不正です');
+  }
+  if (!Array.isArray(fields) || !Array.isArray(terms)) {
+    throw new Error('redaction policyのfields/termsが不正です');
+  }
+  if (fields.length + terms.length > MAX_BUSINESS_REDACTION_RULES) {
+    throw new Error('redaction ruleの件数が上限を超えています');
+  }
+
+  const seenFields = new Set<string>();
+  const validatedFields: string[] = [];
+  for (const field of fields) {
+    if (typeof field !== 'string') {
+      throw new Error('redaction fieldが不正です');
+    }
+    const normalized = field.toLowerCase();
+    if (
+      !FIELD_IDENTIFIER.test(field) ||
+      codePointLength(field) > MAX_BUSINESS_FIELD_CODE_POINTS ||
+      normalized === 'redacted' ||
+      seenFields.has(normalized)
+    ) {
+      throw new Error('redaction fieldが不正です');
+    }
+    seenFields.add(normalized);
+    validatedFields.push(field);
+  }
+
+  const seenTerms = new Set<string>();
+  const validatedTerms: string[] = [];
+  for (const term of terms) {
+    if (
+      typeof term !== 'string' ||
+      !isStorableTerm(term) ||
+      isRedactionPlaceholderFragment(term) ||
+      codePointLength(term) > MAX_BUSINESS_TERM_CODE_POINTS ||
+      seenTerms.has(term)
+    ) {
+      throw new Error('redaction termが不正です');
+    }
+    seenTerms.add(term);
+    validatedTerms.push(term);
+  }
+
+  if (typeof suspicion_mode !== 'string' || !(SUSPICION_MODES as readonly string[]).includes(suspicion_mode)) {
+    throw new Error('suspicion_modeが不正です');
+  }
+  if (detector_version !== REDACTION_DETECTOR_VERSION) {
+    throw new Error('detector_versionが不正です');
+  }
+  return {
+    version,
+    fields: validatedFields,
+    terms: validatedTerms,
+    suspicion_mode: suspicion_mode as RedactionPolicy['suspicion_mode'],
+    detector_version: REDACTION_DETECTOR_VERSION,
+  };
 }
