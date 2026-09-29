@@ -4,6 +4,7 @@ import { pathToFileURL } from 'node:url';
 import type { Pool } from 'pg';
 import { z } from 'zod';
 import { createPool } from '../db/pool.js';
+import { listRedactionPolicyOverSsh, replaceRedactionPolicyOverSsh } from './ssh-transport.js';
 import { runCollectorCommand } from '../collector/commands.js';
 import {
   bootstrapInputSchema,
@@ -92,9 +93,33 @@ async function runInputCommand<TSchema extends z.ZodType, TOutput>(
 }
 
 // collector commandは既存adminのDB契約から独立させ、DATABASE_URLを要求しない。
-async function runCollectorCliCommand(command: string, env: NodeJS.ProcessEnv): Promise<number> {
-  const result = await runCollectorCommand(command, env);
+async function runCollectorCliCommand(command: string, args: string[], env: NodeJS.ProcessEnv): Promise<number> {
+  const result = await runCollectorCommand(command, args, env);
   return result.ok ? succeed(result.value) : fail(result.code);
+}
+
+// DATABASE_URLなしのredaction:replaceだけを本番serverの固定versionへ委ねる。
+// 入力検証はssh起動前に行い、invalid_input等の固定codeで拒否する。
+async function runReplaceRedaction(env: NodeJS.ProcessEnv, rest: string[]): Promise<number> {
+  if (rest.length !== 1) {
+    return fail('invalid_arguments');
+  }
+  const input = readInput(redactionReplaceInputSchema, rest[0]);
+  if (!input.ok) {
+    return fail(input.code);
+  }
+  const url = databaseUrl(env);
+  if (url === null) {
+    const result = await replaceRedactionPolicyOverSsh(env, input.value);
+    return result.ok ? succeed(result.value) : fail(result.code);
+  }
+  const pool = createPool(url);
+  try {
+    const result = await replaceRedactionPolicy(pool, input.value);
+    return result.ok ? succeed(result.value) : fail(result.code);
+  } finally {
+    await pool.end();
+  }
 }
 
 async function runListRedaction(env: NodeJS.ProcessEnv, rest: string[]): Promise<number> {
@@ -105,13 +130,15 @@ async function runListRedaction(env: NodeJS.ProcessEnv, rest: string[]): Promise
   if (!parsed.success) {
     return fail('invalid_arguments');
   }
+  const companyId = parsed.data.toLowerCase();
   const url = databaseUrl(env);
   if (url === null) {
-    return fail('invalid_admin_config');
+    const result = await listRedactionPolicyOverSsh(env, companyId);
+    return result.ok ? succeed(result.value) : fail(result.code);
   }
   const pool = createPool(url);
   try {
-    const result = await listRedactionPolicy(pool, parsed.data.toLowerCase());
+    const result = await listRedactionPolicy(pool, companyId);
     return result.ok ? succeed(result.value) : fail(result.code);
   } finally {
     await pool.end();
@@ -161,7 +188,7 @@ export async function runCli(argv: string[], env: NodeJS.ProcessEnv = process.en
       case 'token:revoke':
         return await runInputCommand(env, tokenRevokeInputSchema, rest, (pool, input) => revokeToken(pool, input));
       case 'redaction:replace':
-        return await runInputCommand(env, redactionReplaceInputSchema, rest, (pool, input) => replaceRedactionPolicy(pool, input));
+        return await runReplaceRedaction(env, rest);
       case 'redaction:list':
         return await runListRedaction(env, rest);
       case 'project:repository:add':
@@ -172,7 +199,10 @@ export async function runCli(argv: string[], env: NodeJS.ProcessEnv = process.en
       case 'collector:update':
       case 'collector:doctor':
       case 'collector:uninstall':
-        return await runCollectorCliCommand(command, env);
+      case 'collector:secret:add':
+      case 'collector:secret:list':
+      case 'collector:secret:remove':
+        return await runCollectorCliCommand(command, rest, env);
       case 'inspect':
         return await runInspect(env, rest);
       default:
