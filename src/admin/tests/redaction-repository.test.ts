@@ -12,8 +12,9 @@ import {
   type AdminRun,
 } from './support.js';
 
-// yori migration 0010 (rule_type/value/normalized_value) のcustom伏せ字policyとrepository aliasを
-// 管理CLIから操作する契約。失敗時はversion・rules・aliasを一切変更しない（transaction）。
+// yori migration 0010 (rule_type/value/normalized_value) とrepository aliasを管理CLIから操作する契約。
+// CLIのcustom redactionはliteral valueだけを公開し、assignment_keyはlistで黙って隠さず失敗する。
+// 失敗時はversion・values・aliasを一切変更しない（transaction）。
 const pool = createPool(testDatabaseUrl());
 
 before(async () => {
@@ -27,35 +28,6 @@ beforeEach(async () => {
 after(async () => {
   await pool.end();
 });
-
-type TypedRule = { type: 'literal' | 'assignment_key'; value: string };
-
-function literal(value: string): TypedRule {
-  return { type: 'literal', value };
-}
-
-function assignmentKey(value: string): TypedRule {
-  return { type: 'assignment_key', value };
-}
-
-function normalizedValue(rule: TypedRule): string {
-  return rule.type === 'literal' ? rule.value : rule.value.toLowerCase();
-}
-
-// listはrule_type→normalized_valueの決定的な順で返す。
-function expectedOrder(rules: readonly TypedRule[]): TypedRule[] {
-  return [...rules].sort((left, right) => {
-    if (left.type !== right.type) {
-      return left.type < right.type ? -1 : 1;
-    }
-    const leftValue = normalizedValue(left);
-    const rightValue = normalizedValue(right);
-    if (leftValue === rightValue) {
-      return 0;
-    }
-    return leftValue < rightValue ? -1 : 1;
-  });
-}
 
 function str(value: unknown): string {
   assert.equal(typeof value, 'string', `文字列ではない: ${JSON.stringify(value)}`);
@@ -90,14 +62,20 @@ async function createProject(companyId: string, repository: string): Promise<str
   return str(parseSuccessJson(run).project_id);
 }
 
-async function replacePolicy(companyId: string, expectedVersion: number, rules: unknown): Promise<AdminRun> {
-  return withInputFile('redaction.json', { company_id: companyId, expected_version: expectedVersion, rules }, (filePath) =>
-    runAdmin(['redaction:replace', filePath]),
-  );
+async function runReplace(input: unknown): Promise<AdminRun> {
+  return withInputFile('redaction.json', input, (filePath) => runAdmin(['redaction:replace', filePath]));
+}
+
+async function replaceValues(companyId: string, expectedVersion: number, values: unknown): Promise<AdminRun> {
+  return runReplace({ company_id: companyId, expected_version: expectedVersion, values });
 }
 
 async function listPolicy(companyId: string): Promise<Record<string, unknown>> {
   return parseSuccessJson(await runAdmin(['redaction:list', companyId]));
+}
+
+async function runRepositoryCommand(command: 'project:repository:add' | 'project:repository:remove', input: unknown): Promise<AdminRun> {
+  return withInputFile('repository.json', input, (filePath) => runAdmin([command, filePath]));
 }
 
 interface StoredRuleRow {
@@ -106,14 +84,13 @@ interface StoredRuleRow {
   normalized_value: string;
 }
 
-async function storedRules(companyId: string): Promise<{ version: number; rules: TypedRule[]; rows: StoredRuleRow[] }[]> {
+async function storedRules(companyId: string): Promise<{ version: number; values: string[]; rows: StoredRuleRow[] }[]> {
   const result = await pool.query<{ version: number; rule_type: string | null; value: string | null; normalized_value: string | null }>(
     `SELECT p.version, r.rule_type, r.value, r.normalized_value
        FROM company_redaction_policies p
        LEFT JOIN company_redaction_rules r ON r.company_id = p.company_id
       WHERE p.company_id = $1
-      -- 期待順（expectedOrderのcodepoint順）とDB locale collationの差でtestが揺れないようC collationで読む。
-      ORDER BY r.rule_type, r.normalized_value COLLATE "C"`,
+      ORDER BY r.rule_type, r.value`,
     [companyId],
   );
   if (result.rows.length === 0) {
@@ -124,151 +101,135 @@ async function storedRules(companyId: string): Promise<{ version: number; rules:
       ? []
       : [{ rule_type: row.rule_type, value: row.value, normalized_value: row.normalized_value }],
   );
-  const rules = rows.flatMap((row): TypedRule[] =>
-    row.rule_type === 'literal' || row.rule_type === 'assignment_key' ? [{ type: row.rule_type, value: row.value }] : [],
-  );
-  return [{ version: result.rows[0].version, rules, rows }];
-}
-
-async function runRepositoryCommand(command: 'project:repository:add' | 'project:repository:remove', input: unknown): Promise<AdminRun> {
-  return withInputFile('repository.json', input, (filePath) => runAdmin([command, filePath]));
+  return [{ version: result.rows[0].version, values: rows.filter((row) => row.rule_type === 'literal').map((row) => row.value), rows }];
 }
 
 describe('redaction:replace / redaction:list', () => {
-  it('literalとassignment_keyのtyped ruleを登録し、listはrule_type→normalized_value順で返す', async () => {
+  it('literal valuesを登録し、listはversionと決定的順のvaluesだけを返す', async () => {
     const companyId = await createCompany();
-    // 並びはrule_type→normalized_valueで一意になり、collation差でも崩れないASCII小文字中心の値を使う。
-    const input = [literal('beta-literal'), assignmentKey('Zed_key'), literal('alpha-literal'), assignmentKey('beta_key')];
-    parseSuccessJson(await replacePolicy(companyId, 0, input));
+    parseSuccessJson(await replaceValues(companyId, 0, ['beta-literal', 'alpha-literal']));
 
     const listed = await listPolicy(companyId);
-    assert.deepEqual(Object.keys(listed).sort(), ['rules', 'version']);
+    assert.deepEqual(Object.keys(listed).sort(), ['values', 'version']);
     assert.equal(listed.version, 1);
-    const expected = expectedOrder(input);
-    assert.deepEqual(list(listed.rules), expected, 'listがrule_type→normalized_value順のtyped ruleを返していない');
-    assert.equal(await countRows(pool, 'company_redaction_rules'), 4);
+    assert.deepEqual(list(listed.values), ['alpha-literal', 'beta-literal']);
 
     const stored = await storedRules(companyId);
     assert.equal(stored[0].version, 1);
-    assert.deepEqual(stored[0].rules, expected, 'DBがtyped ruleを保持していない');
-    const normalized = new Map(stored[0].rows.map((row) => [`${row.rule_type}:${row.value}`, row.normalized_value]));
-    assert.equal(normalized.get('literal:beta-literal'), 'beta-literal');
-    assert.equal(normalized.get('assignment_key:Zed_key'), 'zed_key');
-    assert.equal(normalized.get('assignment_key:beta_key'), 'beta_key');
-  });
-
-  it('expected_version一致でdelete+insert+version incrementをtyped ruleで行う', async () => {
-    const companyId = await createCompany();
-    const first = [literal('alpha-literal'), assignmentKey('pass')];
-    const second = [assignmentKey('SECRET_KEY'), literal('Gamma')];
-    parseSuccessJson(await replacePolicy(companyId, 0, first));
-    parseSuccessJson(await replacePolicy(companyId, 1, second));
-
-    const listed = await listPolicy(companyId);
-    assert.equal(listed.version, 2);
-    assert.deepEqual(list(listed.rules), expectedOrder(second));
-    assert.equal(await countRows(pool, 'company_redaction_rules'), 2, '旧ruleが残っている');
-    assert.deepEqual((await storedRules(companyId))[0].rules, expectedOrder(second));
-  });
-
-  it('literalはcase違いを別ruleとして受理し、assignment_keyはcase-insensitive重複を拒否する', async () => {
-    const companyId = await createCompany();
-    const caseLiterals = [literal('Case'), literal('case')];
-    parseSuccessJson(await replacePolicy(companyId, 0, caseLiterals));
-    // case違いは別ruleなので両方保持される。順序はcollation依存を避けて集合で比較する。
-    const listedCaseRules = list((await listPolicy(companyId)).rules).map((rule) => JSON.stringify(rule)).sort();
-    assert.deepEqual(listedCaseRules, caseLiterals.map((rule) => JSON.stringify(rule)).sort());
-    assert.equal(await countRows(pool, 'company_redaction_rules'), 2);
-
-    const duplicateKeys = [assignmentKey('pass'), assignmentKey('PASS')];
-    const run = await replacePolicy(companyId, 1, duplicateKeys);
-    expectFixedFailure(run, ['invalid_arguments', 'internal_error']);
-    assert.ok(!run.stderr.includes('pass'), 'assignment_keyの値をstderrへ出している');
-    assert.deepEqual((await storedRules(companyId))[0].rules, expectedOrder(caseLiterals), '重複拒否でpolicyを変更している');
-  });
-
-  it('literal512cp・assignment_key128cpの境界を受理し、上限超過・不正identifier・REDACTED・placeholderを拒否する', async () => {
-    const companyId = await createCompany();
-    const boundaryLiteral = literal('x'.repeat(512));
-    const boundaryKey = assignmentKey(`A${'a'.repeat(127)}`);
-    const boundaryRules = [boundaryLiteral, boundaryKey];
-    parseSuccessJson(await replacePolicy(companyId, 0, boundaryRules));
-    assert.equal(await countRows(pool, 'company_redaction_rules'), 2);
-
-    const cases: { label: string; rules: unknown }[] = [
-      { label: 'literal 513cp', rules: [literal('x'.repeat(513))] },
-      { label: 'assignment_key 129cp', rules: [assignmentKey(`a${'a'.repeat(128)}`)] },
-      { label: 'assignment_key 先頭数字', rules: [assignmentKey('1pass')] },
-      { label: 'assignment_key 空白', rules: [assignmentKey('pass key')] },
-      { label: 'assignment_key colon', rules: [assignmentKey('pass:key')] },
-      { label: 'assignment_key 空文字', rules: [assignmentKey('')] },
-      { label: 'assignment_key REDACTED', rules: [assignmentKey('REDACTED')] },
-      { label: 'assignment_key Redacted', rules: [assignmentKey('Redacted')] },
-      { label: 'literal placeholder custom', rules: [literal('[REDACTED:custom]')] },
-      { label: 'literal placeholder jwt', rules: [literal('[REDACTED:jwt]')] },
-      { label: 'literal 空文字', rules: [literal('')] },
-      { label: '旧string rule', rules: ['alpha-literal'] },
-      { label: 'unknown type', rules: [{ type: 'regex', value: 'x' }] },
-      { label: 'value欠落', rules: [{ type: 'literal' }] },
-      { label: 'unknown field', rules: [{ type: 'literal', value: 'ok', extra: true }] },
-      { label: '非object', rules: [1] },
-      { label: 'literal重複', rules: [literal('LEAK_MARKER_dup'), literal('LEAK_MARKER_dup')] },
-      { label: '合算101件', rules: Array.from({ length: 101 }, (_, index) => assignmentKey(`key_${index}`)) },
-    ];
-    for (const invalid of cases) {
-      const run = await replacePolicy(companyId, 1, invalid.rules);
-      expectFixedFailure(run, ['invalid_arguments', 'internal_error']);
-      assert.ok(!run.stderr.includes('LEAK_MARKER_dup'), `${invalid.label} のstderrへrule値を出している`);
-      assert.deepEqual(
-        (await storedRules(companyId))[0].rules,
-        expectedOrder(boundaryRules),
-        `${invalid.label} でpolicyを変更している`,
-      );
+    assert.deepEqual(stored[0].values, ['alpha-literal', 'beta-literal']);
+    for (const row of stored[0].rows) {
+      assert.equal(row.rule_type, 'literal', 'literal以外で保存している');
+      assert.equal(row.normalized_value, row.value, 'literalのnormalized_valueがvalueと違う');
     }
-
-    const hundred = Array.from({ length: 50 }, (_, index) => literal(`lit_${index}`)).concat(
-      Array.from({ length: 50 }, (_, index) => assignmentKey(`key_${index}`)),
-    );
-    parseSuccessJson(await replacePolicy(companyId, 1, hundred));
-    assert.equal(await countRows(pool, 'company_redaction_rules'), 100, 'typed rule合算100件を受理していない');
-    assert.deepEqual(list((await listPolicy(companyId)).rules), expectedOrder(hundred));
   });
 
-  it('staleなexpected_versionは競合として拒否し、versionとtyped rulesを変更しない', async () => {
+  it('CAS成功時に旧assignment_key rowを含む全rulesをDELETEし、valuesだけへ置換する', async () => {
     const companyId = await createCompany();
-    const baseline = [literal('keep-literal')];
-    parseSuccessJson(await replacePolicy(companyId, 0, baseline));
+    parseSuccessJson(await replaceValues(companyId, 0, ['keep-literal']));
+    await pool.query(
+      "INSERT INTO company_redaction_rules (company_id, rule_type, value, normalized_value) VALUES ($1, 'assignment_key', 'old_key', 'old_key')",
+      [companyId],
+    );
+    assert.equal(await countRows(pool, 'company_redaction_rules'), 2);
 
-    const stale = await replacePolicy(companyId, 0, [literal('new-literal')]);
+    parseSuccessJson(await replaceValues(companyId, 1, ['after-literal']));
+    const stored = await storedRules(companyId);
+    assert.deepEqual(stored[0].values, ['after-literal']);
+    assert.ok(stored[0].rows.every((row) => row.rule_type === 'literal'), 'assignment_key rowが残っている');
+    assert.equal(await countRows(pool, 'company_redaction_rules'), 1);
+
+    assert.deepEqual(list((await listPolicy(companyId)).values), ['after-literal']);
+  });
+
+  it('literal valuesは512cp・100件境界を受理し、空・placeholder・重複・旧shapeを拒否する', async () => {
+    const companyId = await createCompany();
+    const maxLiteral = 'x'.repeat(512);
+    parseSuccessJson(await replaceValues(companyId, 0, [maxLiteral]));
+    assert.deepEqual(list((await listPolicy(companyId)).values), [maxLiteral]);
+
+    const hundred = Array.from({ length: 100 }, (_, index) => `lit-${String(index).padStart(3, '0')}`);
+    const hundredSorted = [...hundred].sort();
+    parseSuccessJson(await replaceValues(companyId, 1, hundred));
+    assert.equal(await countRows(pool, 'company_redaction_rules'), 100);
+    assert.deepEqual(list((await listPolicy(companyId)).values), hundredSorted);
+
+    const invalidCases: { label: string; input: unknown }[] = [
+      {
+        label: '101件',
+        input: { company_id: companyId, expected_version: 2, values: Array.from({ length: 101 }, (_, index) => `over-${index}`) },
+      },
+      { label: '513cp', input: { company_id: companyId, expected_version: 2, values: ['x'.repeat(513)] } },
+      { label: '空文字', input: { company_id: companyId, expected_version: 2, values: [''] } },
+      { label: 'placeholder custom', input: { company_id: companyId, expected_version: 2, values: ['[REDACTED:custom]'] } },
+      { label: 'placeholder jwt', input: { company_id: companyId, expected_version: 2, values: ['[REDACTED:jwt]'] } },
+      { label: '重複', input: { company_id: companyId, expected_version: 2, values: ['LEAK_MARKER_dup', 'LEAK_MARKER_dup'] } },
+      { label: '非文字列', input: { company_id: companyId, expected_version: 2, values: [1] } },
+      { label: '旧rules field', input: { company_id: companyId, expected_version: 2, rules: ['old-literal'] } },
+      { label: 'typed rule object', input: { company_id: companyId, expected_version: 2, values: [{ type: 'literal', value: 'typed' }] } },
+      { label: 'keys field', input: { company_id: companyId, expected_version: 2, keys: ['old_key'] } },
+      { label: 'assignment_keys field', input: { company_id: companyId, expected_version: 2, assignment_keys: ['old_key'] } },
+      {
+        label: 'rules併記',
+        input: { company_id: companyId, expected_version: 2, values: ['ok-literal'], rules: ['old-literal'] },
+      },
+      { label: 'unknown field', input: { company_id: companyId, expected_version: 2, values: ['ok-literal'], extra: true } },
+    ];
+    for (const invalid of invalidCases) {
+      const run = await runReplace(invalid.input);
+      expectFixedFailure(run, ['invalid_arguments', 'internal_error']);
+      assert.ok(!run.stderr.includes('LEAK_MARKER_dup'), `${invalid.label} のstderrへvalueを出している`);
+      const stored = await storedRules(companyId);
+      assert.equal(stored[0].version, 2, `${invalid.label} でversionを変更している`);
+      assert.deepEqual(stored[0].values, hundredSorted, `${invalid.label} でvaluesを変更している`);
+    }
+  });
+
+  it('DBにassignment_key rowが存在する場合、listは黙って隠さずinternal_errorで失敗する', async () => {
+    const companyId = await createCompany();
+    parseSuccessJson(await replaceValues(companyId, 0, ['keep-literal']));
+    await pool.query(
+      "INSERT INTO company_redaction_rules (company_id, rule_type, value, normalized_value) VALUES ($1, 'assignment_key', 'legacy_key', 'legacy_key')",
+      [companyId],
+    );
+
+    const run = await runAdmin(['redaction:list', companyId]);
+    assert.equal(run.code, 1);
+    assert.equal(run.stdout, '');
+    assert.equal(run.stderr, 'admin: internal_error\n', 'assignment_key rowを黙って隠している');
+    assert.equal(await countRows(pool, 'company_redaction_rules'), 2, 'list失敗でassignment_key rowを削除している');
+  });
+
+  it('staleなexpected_versionは競合として拒否し、versionとvaluesを変更しない', async () => {
+    const companyId = await createCompany();
+    parseSuccessJson(await replaceValues(companyId, 0, ['keep-literal']));
+
+    const stale = await replaceValues(companyId, 0, ['new-literal']);
     expectFixedFailure(stale, ['invalid_arguments', 'internal_error', 'invalid_input']);
 
     const listed = await listPolicy(companyId);
     assert.equal(listed.version, 1);
-    assert.deepEqual(list(listed.rules), expectedOrder(baseline));
-    assert.deepEqual((await storedRules(companyId))[0].rules, expectedOrder(baseline));
+    assert.deepEqual(list(listed.values), ['keep-literal']);
+    assert.deepEqual((await storedRules(companyId))[0].values, ['keep-literal']);
   });
 
-  it('insert途中の失敗では旧version・旧typed rulesへrollbackする', async () => {
+  it('insert途中の失敗では旧version・旧valuesへrollbackする', async () => {
     const companyId = await createCompany();
-    const baseline = [literal('keep-me')];
-    parseSuccessJson(await replacePolicy(companyId, 0, baseline));
+    parseSuccessJson(await replaceValues(companyId, 0, ['keep-me']));
 
-    const failed = await replacePolicy(companyId, 1, [literal('new-first'), literal('bad\u0000literal')]);
+    const failed = await replaceValues(companyId, 1, ['new-first', 'bad\u0000literal']);
     expectFixedFailure(failed, ['invalid_arguments']);
 
-    assert.deepEqual((await storedRules(companyId))[0].rules, expectedOrder(baseline), '失敗時にpolicyがrollbackされていない');
+    assert.deepEqual((await storedRules(companyId))[0].values, ['keep-me'], '失敗時にpolicyがrollbackされていない');
     assert.equal(await countRows(pool, 'company_redaction_rules'), 1);
   });
 
-  it('他社のpolicyとrulesへ影響しない', async () => {
+  it('他社のpolicyとvaluesへ影響しない', async () => {
     const companyA = await createCompany('a');
     const companyB = await createCompany('b');
-    const rulesA = [literal('a-literal')];
-    const rulesB = [assignmentKey('b_key')];
-    parseSuccessJson(await replacePolicy(companyA, 0, rulesA));
-    parseSuccessJson(await replacePolicy(companyB, 0, rulesB));
-    assert.deepEqual((await storedRules(companyA))[0].rules, expectedOrder(rulesA));
-    assert.deepEqual((await storedRules(companyB))[0].rules, expectedOrder(rulesB));
+    parseSuccessJson(await replaceValues(companyA, 0, ['a-literal']));
+    parseSuccessJson(await replaceValues(companyB, 0, ['b-literal']));
+    assert.deepEqual((await storedRules(companyA))[0].values, ['a-literal']);
+    assert.deepEqual((await storedRules(companyB))[0].values, ['b-literal']);
   });
 });
 
