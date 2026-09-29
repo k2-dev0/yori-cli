@@ -142,4 +142,38 @@ describe('launcherのknown secret環境', () => {
       });
     }
   });
+  it('Keychain値の前後空白を保持し、security出力の末尾改行だけを落とす', async () => {
+    await withCollectorFixture(async (fixture) => {
+      const command = await installWithBundle(fixture, KNOWN_SECRETS_BUNDLE);
+      const padded = '  padded launcher secret  ';
+      await writeSecretIndexLabels(fixture, [LABEL_ALPHA]);
+      await writeKeychainSecret(fixture, LABEL_ALPHA, padded);
+
+      const launched = runShellCommand(fixture, command);
+      assert.equal(launched.status, 0, `launcher実行が失敗した: ${launched.stderr}`);
+      const marker = launched.stdout.match(/known-secrets:(.*)\n/);
+      assert.ok(marker !== null, `YORI_KNOWN_SECRETS_JSONのmarkerがない: ${launched.stdout}`);
+      assert.deepEqual(JSON.parse(marker[1]), [padded], 'YORI_KNOWN_SECRETS_JSONで値の空白が変わっている');
+    });
+  });
+
+  it('index labelは1〜128 code pointsだけを許可し、境界外はlauncher_errorで子を起動しない', async () => {
+    await withCollectorFixture(async (fixture) => {
+      const command = await installWithBundle(fixture, KNOWN_SECRETS_MARKER_BUNDLE);
+      const invalidLabels = [[''], ['a'.repeat(129)], ['😀'.repeat(129)]];
+      for (const labels of invalidLabels) {
+        await writeSecretIndexLabels(fixture, labels);
+        const launched = runShellCommand(fixture, command);
+        assert.equal(launched.status, 1, `${JSON.stringify(labels)} で失敗していない: ${launched.stderr}`);
+        assert.equal(launched.stdout, '');
+        assert.equal(launched.stderr, 'collector: launcher_error\n', `${JSON.stringify(labels)} の固定codeが違う`);
+      }
+
+      const label128 = 'a'.repeat(128);
+      await writeSecretIndexLabels(fixture, [label128]);
+      await writeKeychainSecret(fixture, label128, VALID_VALUE_ALPHA);
+      const accepted = runShellCommand(fixture, command);
+      assert.equal(accepted.status, 0, `128 code pointsのlabelで失敗した: ${accepted.stderr}`);
+    });
+  });
 });
