@@ -18,9 +18,9 @@ npx --yes --package=yori-cli@<reviewed-version> yori inspect <company-uuid>
 
 `DATABASE_URL` をcommand行へ書かない。本番ではyoriのinternal Docker networkへ参加する一時Node container内でnpxを起動し、`/etc/yori/yori.env` の3値からcontainer内でURLを構成する。migration順序、review済みsource配置、read-only input mount、token非記録は [deployment手順](../deployment/README.md) を正本とする。
 
-`DATABASE_URL` はargvで受け取らない。未設定・空の場合は `invalid_admin_config` で終了する。本番Composeはyori本体と同じDBの3値からURLを構成する。
+`DATABASE_URL` はargvで受け取らない。未設定・空の場合は `invalid_admin_config` で終了する。ただし `redaction:replace` / `redaction:list` だけは、本番server `yori-production` の `/srv/yori` で `docker compose -p yori --env-file /etc/yori/yori.env -f deployment/compose.yaml --profile tools run --rm --no-deps -T` を実行し、固定package version（`yori-cli@<package version>`）へ `/usr/bin/ssh`（test/開発時は `YORI_SSH_BIN`）で委ねる。policy JSONは0600の一時fileだけへ置いてtrapで削除し、containerへread-only mountしてargv・stdout/stderrへ出さない。remoteの既知admin codeだけをそのまま返し、未知code・ssh transport failure・応答契約違反は `internal_error` へ縮退する。本番Composeはyori本体と同じDBの3値からURLを構成する。
 
-`collector:install` / `collector:update` / `collector:doctor` / `collector:uninstall` はDBを使わず、`DATABASE_URL` を要求しない。macOS専用で、他platformでは `unsupported_platform` で端末を変更せずに終了する。導入手順と保持するfileは [README](../README.md) を参照。
+`collector:install` / `collector:update` / `collector:doctor` / `collector:uninstall` / `collector:secret:*` はDBを使わず、`DATABASE_URL` を要求しない。macOS専用で、他platformでは `unsupported_platform` で端末を変更せずに終了する。導入手順と保持するfileは [README](../README.md) を参照。
 
 ### リポジトリ内（開発時）
 
@@ -32,21 +32,23 @@ DATABASE_URL='<test-or-development-database-url>' npm run --silent yori -- inspe
 
 ### Compose (tools profile)
 
-yori本体のmigration完了後に、同じenv fileとexternal networkを使う。
+yori本体のmigration完了後、本番server `yori-production` の `/srv/yori` でtools profileの `migrate` serviceを一時Node環境として借りる。remote composeに `cli` serviceは無いため、migrationは実行せず `migrate` のentrypointとcommandだけを `npx` へ上書きする。`DATABASE_URL` 未設定時の `redaction:replace` / `redaction:list` がssh transportで組み立てるcommandも同じ形である。
 
 ```sh
-docker compose --env-file /etc/yori/yori.env -f deployment/compose.yaml --profile tools run --rm \
-  cli inspect <company-uuid>
+cd /srv/yori
+sudo docker compose -p yori --env-file /etc/yori/yori.env -f deployment/compose.yaml --profile tools run --rm --no-deps -T \
+  --entrypoint npx migrate --yes --package=yori-cli@<package version> yori inspect <company-uuid>
 ```
 
-- network名は既定で `yori_default`。別名を使う場合は `YORI_ADMIN_NETWORK` を指定する。
-- `YORI_POSTGRES_USER`、`YORI_POSTGRES_PASSWORD`、`YORI_POSTGRES_DB` は必須。固定URLへのfallbackはない。
-- 初回実行時はcontainer内で `npm ci` が走る。
+- `YORI_POSTGRES_USER`、`YORI_POSTGRES_PASSWORD`、`YORI_POSTGRES_DB` は必須。固定URLへのfallbackはない。containerの `DATABASE_URL` はyori本体と同じ3値から構成する。
+- `yori-cli` は固定package versionをexact指定し、依存はnpxが取得する。`PATH` 解決やlatestへ依存しない。
+- `--no-deps -T` で他serviceを起動せず、非対話で1回だけ実行する。
 
 ## 2. 入出力の契約
 
 - 入力は常にJSON file。引数の順序誤りとshell履歴への値の露出を避けるため、コマンドライン引数では値を受けない。
 - 入力JSONはrepository外のpathでもよく、file pathだけを引数へ渡す。内容はstdout/stderrへ出さない。
+- JSON file契約はDBを扱うadmin commandのもの。collector command（`collector:install`等）はJSON fileを要求せず、`collector:secret:add`の値だけはsecurityの非表示promptまたは`--from-env`から受ける。
 - 入力JSONはunknown fieldを拒否する (`invalid_input`)。
 - 成功時は1行のJSON objectだけをstdoutへ出し、終了コード0で終わる。
 - 既知の失敗は `admin: <code>` だけをstderrへ出し、終了コード1で終わる。
@@ -162,31 +164,34 @@ docker compose --env-file /etc/yori/yori.env -f deployment/compose.yaml --profil
 
 ### `redaction:replace <file.json>`
 
-会社のcustom伏せ字policyをversion CASで置換する。yori migration `0010_custom_redaction.sql` を適用済みのDBだけが対象で、markerが無ければ `internal_error`。
+会社のcustom伏せ字policy（fields/terms/suspicion_mode）をversion CASで置換する。yori migration `0010_custom_redaction.sql` を適用済みのDBだけが対象で、markerが無ければ `internal_error`。`DATABASE_URL` が未設定・空の場合はSSH transportへ委ねる。
 
 ```json
 {
   "company_id": "<uuid>",
   "expected_version": 0,
-  "values": ["example-literal", "example-project-name"]
+  "fields": ["Pass_Key", "pass.key"],
+  "terms": ["example-term", "Example-Term"],
+  "suspicion_mode": "observe"
 }
 ```
 
-- `values` は伏せ字対象のliteral文字列だけを最大100件。各1〜512 code pointsで、exact・case-sensitiveに一致する（case違いは別の値）。
-- 空文字・重複・既知placeholder（`[REDACTED:custom]`等）の部分文字列は `invalid_input`。regexは受け付けず、`rules` field・object形式のrule・`keys`/`assignment_keys` fieldなど旧形式や未知fieldも `invalid_input`。
-- built-inの代入伏せ字（`PASS`・`PASSWORD`・`PASSWD`・`SECRET`・`TOKEN`・`KEY`・`APIKEY`・`CREDENTIAL`と区切り `:`・`=`・`：`）は設定不要で常に有効。custom CLIへ登録するのは、built-inで拾えない値・固有名詞そのものだけにする。
-- built-in `PASS` は前後がidentifier文字の部分一致を対象にしない。`compass`・`bypass`・`DB_PASS` 等を伏せたい場合はcustom `values` へ明示する。
-- `expected_version` が0のときだけpolicy行を作りversionは1になる。既存policyへは一致時だけ全置換しversionを1増やす。不一致は `redaction_policy_conflict`、会社が無ければ `company_not_found`。失敗時はversion・valuesとも変更しない。
-- 入力JSONはrepository外のpathでもよく、値をargvへ出さない。delete+insert+version incrementは1 transactionで行い、途中失敗時はrollbackする。
+- `fields` は代入keyの伏せ字対象。ASCII identifier（`^[A-Za-z_][A-Za-z0-9_.-]*$`）・128 code points以内・`redacted` 禁止。case-insensitiveに重複判定する。
+- `terms` は本文の完全一致伏せ字対象。1〜512 code points・exact・case-sensitiveに重複判定する。空文字・`REDACTED`・placeholder構文（`[`・`]`・`:`）・placeholder種類名（`jwt`・`business_value`・`known_secret`等）は `invalid_input`。
+- `fields` と `terms` の合計は最大100件。null byte・単独surrogate・非string・未知key・欠落key・旧shape（`values`・`rules`・`assignment_keys`・`keys`）は `invalid_input`。
+- `suspicion_mode` は `observe`（送信継続）または `block`（message全体を保存させない）。省略は `invalid_input`、`detector_version` keyは受け付けない（現行は `initial-v1` 固定）。
+- `expected_version` が0のときだけpolicy行を作りversionは1になる。既存policyへは一致時だけ全置換しversionを1増やす。不一致は `redaction_policy_conflict`、会社が無ければ `company_not_found`。
+- 検証はDB接続前に行い、失敗時はversion・fields・terms・suspicion_modeを一切変更しない。delete+insert+version incrementは1 transactionで行い、途中失敗時はrollbackする。
+- 入力JSONはrepository外のpathでもよく、値をargvへ出さない。
 
 成功出力例: `{"status":"replaced","company_id":"<uuid>","version":1}`
 
 ### `redaction:list <company-id>`
 
-会社のcurrent policyをvalue昇順のliteral一覧として返す。policy未登録の会社はversion 0・values空。
+会社のcurrent policyを返す。policy未登録の会社はversion 0・field/term空・`observe` / `initial-v1` を返す。`DATABASE_URL` が未設定・空の場合はSSH transportへ委ねる。
 
 ```json
-{"version":1,"values":["example-literal","example-project-name"]}
+{"version":1,"fields":["Pass_Key"],"terms":["example-term"],"suspicion_mode":"observe","detector_version":"initial-v1"}
 ```
 
 生token・token hash・DB URLは返さない。
@@ -206,6 +211,22 @@ docker compose --env-file /etc/yori/yori.env -f deployment/compose.yaml --profil
 - 追加・削除は1 transactionで行い、yori migration `0010_custom_redaction.sql` が必要。
 
 成功出力例: `{"status":"created","project_id":"<uuid>","repository_identifier":"github.com/example/project-a"}`、removeは `{"status":"removed",...}`。
+
+### `collector:secret:add` / `collector:secret:list` / `collector:secret:remove`
+
+collectorへ渡すknown secretをmacOS Keychain（service `online.yori.collector.secret`）のlabel別itemとして管理する。値はKeychainだけへ置き、argv・index・log・stdout/stderrへ出さない。`DATABASE_URL` は不要。
+
+```sh
+yori collector:secret:add <label>                 # securityの非表示promptで値を保存
+yori collector:secret:add <label> --from-env ENV  # 環境変数の値をsecurityのstdin経由で保存
+yori collector:secret:list                        # labelだけを昇順で表示
+yori collector:secret:remove <label>              # Keychain itemとindex entryを削除
+```
+
+- indexは `~/.yori-collector/secrets.json` のlabels-only JSON array。labelは1〜128 code points、厳密な昇順・重複なし・最大100件で、modeは0600。
+- 値は8〜4096 code points・最大100件・exact重複なし。label違いの同値も拒否する。100件を超えるaddも同様。保存後の検証・index書き込みに失敗した場合はKeychain itemを元の値へ戻して拒否し、rollback自体に失敗した場合は `collector_rollback_failed` になる。
+- 成功出力は `{"status":"stored","label":"<label>"}` / `{"labels":["<label>",...]}` / `{"status":"removed","label":"<label>"}`。
+- stable launcherはindexのlabel順にKeychain値だけを合成し、子collectorの `YORI_KNOWN_SECRETS_JSON` としてだけ渡す（親envの同名値は上書き）。index不正・item欠落・値の制限違反は子を起動せず `collector: launcher_error` でfail-closedする。
 
 ## 4. repository identifierの正規化
 
@@ -274,10 +295,11 @@ repositoryはUTF-8で1024バイト以内。host小文字・先頭slashなし・�
 | `collector_hook_invalid` | hook設定がsymlink・不正JSON・非object |
 | `collector_hook_conflict` | 既存hookに所有entryと競合するcollector設定がある |
 | `collector_hook_error` | hook書き込みに失敗し、全成果物をrollbackした |
-| `collector_keychain_error` | Keychain tokenの登録・取得に失敗した |
+| `collector_keychain_error` | Keychain token / known secretの登録・取得・削除に失敗した |
 | `collector_repository_not_found` | cwdのgit originをcanonical repositoryへ解決できない |
-| `collector_invalid_request` / `collector_unauthorized` | setup APIが400 / 401を返した |
-| `collector_internal_error` | setup APIの500・transport error・応答契約違反 |
+| `collector_invalid_request` / `collector_unauthorized` | setup APIが400 / 401を返した。collector:secretのlabel・値・上限・未登録label違反も `collector_invalid_request` |
+| `launcher_error`（collector stderr） | stable launcherがindex不正・Keychain item欠落・known secret制限違反を検出し、子collectorを起動しなかった |
+| `collector_internal_error` | setup APIの500・transport error・応答契約違反。collector:secret indexの破損も含む |
 | `collector_not_installed` | `collector:update` の対象となるinstall状態が無い |
 | `collector_install_error` | 端末側fileへの書き込みに失敗し、全成果物をrollbackした |
 | `collector_rollback_failed` | 失敗時のrollback自体に失敗した |
