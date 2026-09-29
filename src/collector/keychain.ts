@@ -1,8 +1,8 @@
 import { execFileSync, spawnSync } from 'node:child_process';
 import { COLLECTOR_KEYCHAIN_SERVICE, DEFAULT_SECURITY_BIN, CollectorFailure } from './contract.js';
 
-// test/development overrideは絶対pathの明示指定だけを受ける。
-function securityBin(env: NodeJS.ProcessEnv): string {
+// test/development overrideは絶対pathの明示指定だけを受ける。secret管理も同じ解決を使う。
+export function securityBin(env: NodeJS.ProcessEnv): string {
   const override = env.YORI_SECURITY_BIN;
   return override !== undefined && override.length > 0 ? override : DEFAULT_SECURITY_BIN;
 }
