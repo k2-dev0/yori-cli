@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -41,8 +41,11 @@ export interface AdminRun {
 }
 
 // CLIを子processとして実行する。envへundefinedを渡すとその変数を子から取り除く。
+// DATABASE_URLを明示overrideした呼出し（undefined・空文字を含む）は、既定のDB必須解決を行わない。
 export async function runAdmin(args: string[], options: { env?: Record<string, string | undefined> } = {}): Promise<AdminRun> {
-  const env: NodeJS.ProcessEnv = { ...process.env, DATABASE_URL: testDatabaseUrl(), ...options.env };
+  const overrides = options.env ?? {};
+  const defaultEnv: NodeJS.ProcessEnv = Object.hasOwn(overrides, 'DATABASE_URL') ? {} : { DATABASE_URL: testDatabaseUrl() };
+  const env: NodeJS.ProcessEnv = { ...process.env, ...defaultEnv, ...overrides };
   for (const key of Object.keys(env)) {
     if (env[key] === undefined) {
       delete env[key];
@@ -124,4 +127,68 @@ export async function insertAuthToken(pool: Pool, companyId: string, employeeId:
     sha256Utf8(token),
   ]);
   return id;
+}
+
+// SSH transport (DATABASE_URLなしのredaction:replace / redaction:list) を実hostへ接続せず検証するfixture。
+// CLIは子processとして起動し、YORI_SSH_BIN overrideでこのshimだけを使う。
+export interface SshFixture {
+  root: string;
+  binPath: string;
+  argsLogPath: string;
+  stdinPath: string;
+}
+
+const SSH_SHIM = `#!/bin/sh
+# test fixture: ssh transportを実hostへ接続せず、argvとstdinを記録して合成応答だけを返す。
+dir="\${YORI_TEST_SSH_DIR:?}"
+for arg in "$@"; do printf '%s\\037' "$arg" >> "$dir/args"; done
+printf '\\n' >> "$dir/args"
+cat > "$dir/stdin"
+if [ -f "$dir/stdout" ]; then cat "$dir/stdout"; fi
+if [ -f "$dir/stderr" ]; then cat "$dir/stderr" >&2; fi
+if [ -f "$dir/exit" ]; then exit "$(cat "$dir/exit")"; fi
+exit 0
+`;
+
+export async function createSshFixture(): Promise<SshFixture> {
+  const root = await mkdtemp(path.join(tmpdir(), 'yori-cli-ssh-'));
+  const binPath = path.join(root, 'ssh');
+  await writeFile(binPath, SSH_SHIM, { mode: 0o755 });
+  await chmod(binPath, 0o755);
+  return { root, binPath, argsLogPath: path.join(root, 'args'), stdinPath: path.join(root, 'stdin') };
+}
+
+export async function withSshFixture<T>(run: (fixture: SshFixture) => Promise<T>): Promise<T> {
+  const fixture = await createSshFixture();
+  try {
+    return await run(fixture);
+  } finally {
+    await rm(fixture.root, { recursive: true, force: true });
+  }
+}
+
+export interface SshResponse {
+  stdout?: string;
+  stderr?: string;
+  exitCode?: number;
+}
+
+// shimの応答を指定する。未指定はstdout空・stderr空・exit 0。
+export async function writeSshResponse(fixture: SshFixture, response: SshResponse = {}): Promise<void> {
+  await writeFile(path.join(fixture.root, 'stdout'), response.stdout ?? '', 'utf8');
+  await writeFile(path.join(fixture.root, 'stderr'), response.stderr ?? '', 'utf8');
+  await writeFile(path.join(fixture.root, 'exit'), String(response.exitCode ?? 0), 'utf8');
+}
+
+export interface SshInvocation {
+  args: string[];
+  stdin: string;
+}
+
+// shimが記録した呼出し。1回のCLI実行につき1件を期待する。
+export async function readSshInvocations(fixture: SshFixture): Promise<SshInvocation[]> {
+  const argsText = await readFile(fixture.argsLogPath, 'utf8').catch(() => '');
+  const stdin = await readFile(fixture.stdinPath, 'utf8').catch(() => '');
+  const lines = argsText.split('\n').filter((line) => line.length > 0);
+  return lines.map((line) => ({ args: line.split('\u001f').filter((arg) => arg.length > 0), stdin }));
 }
