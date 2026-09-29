@@ -4,6 +4,17 @@ import { chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { readCollectorArtifact } from '../../collector/artifact.js';
+import { commitCollectorHooks, planCollectorHooks } from '../../collector/hooks.js';
+import { writeCollectorInstallState } from '../../collector/install-state.js';
+import {
+  collectorConfigPath as collectorConfigPathFromHome,
+  collectorInstallStatePath,
+  collectorLauncherPath,
+  writeCollectorConfig,
+  writeCollectorLauncher,
+  writeCollectorVersion,
+} from '../../collector/layout.js';
 import { REPO_ROOT } from './support.js';
 
 // collector:install系のCLI契約を、実HOME・実Keychain・実API・実gitへ触れずに検証するためのfixture。
@@ -22,7 +33,9 @@ const API_MOCK_URL = new URL('./fixtures/collector-api-mock.mjs', import.meta.ur
 
 export const DEFAULT_API_URL = 'https://yori-pilot.online';
 export const KEYCHAIN_SERVICE = 'online.yori.collector';
+export const SECRET_KEYCHAIN_SERVICE = 'online.yori.collector.secret';
 export const CONFIG_FILE_NAME = '.yori-collector.json';
+export const SECRETS_INDEX_FILE_NAME = 'secrets.json';
 
 export const HOOK_FILES = {
   codex: { relative: path.join('.codex', 'hooks.json'), source: 'codex' },
@@ -41,6 +54,7 @@ export interface CollectorFixture {
   apiLogPath: string;
   securityLogPath: string;
   keychainPath: string;
+  secretsDir: string;
 }
 
 export interface ApiResponse {
@@ -67,33 +81,80 @@ esac
 `;
 
 const SECURITY_SHIM = `#!/bin/sh
-# test fixture: 実Keychainへ触れず、呼出しargvとtokenの受け渡しだけを記録する。
+# test fixture: 実Keychainへ触れず、呼出しargvとtoken/secretの受け渡しだけを記録する。
+# token itemはkeychain file 1件、secret itemはonline.yori.collector.secret serviceのlabel別fileで模す。
+log="\${YORI_TEST_SECURITY_LOG:?}"
 for arg in "$@"; do
-  printf '%s\\037' "$arg" >> "\${YORI_TEST_SECURITY_LOG:?}"
+  printf '%s\\037' "$arg" >> "$log"
 done
-printf '\\n' >> "\${YORI_TEST_SECURITY_LOG:?}"
-case "$1" in
-  find-generic-password)
-    if [ -f "\${YORI_TEST_KEYCHAIN_FILE:?}" ]; then
-      cat "\${YORI_TEST_KEYCHAIN_FILE:?}"
-    else
-      printf '%s\\n' 'security: SecKeychainSearchCopyNext: The specified item could not be found in the keychain.' >&2
-      exit 44
-    fi
-    ;;
-  add-generic-password)
-    IFS= read -r token || exit 1
-    printf '%s' "$token" > "\${YORI_TEST_KEYCHAIN_FILE:?}"
-    ;;
-  delete-generic-password)
-    if [ -f "\${YORI_TEST_KEYCHAIN_FILE:?}" ]; then
-      rm -f "\${YORI_TEST_KEYCHAIN_FILE:?}"
-    else
-      exit 44
-    fi
+printf '\\n' >> "$log"
+
+service=""
+account=""
+previous=""
+for arg in "$@"; do
+  case "$previous" in
+    -s) service="$arg" ;;
+    -a) account="$arg" ;;
+  esac
+  previous="$arg"
+done
+
+case "$service" in
+  online.yori.collector.secret)
+    secret_dir="\${YORI_TEST_SECRETS_DIR:?}"
+    target="$secret_dir/$account"
+    case "$1" in
+      find-generic-password)
+        if [ -f "$target" ]; then
+          cat "$target"
+        else
+          printf '%s\\n' 'security: SecKeychainSearchCopyNext: The specified item could not be found in the keychain.' >&2
+          exit 44
+        fi
+        ;;
+      add-generic-password)
+        IFS= read -r value || exit 1
+        mkdir -p "$secret_dir"
+        printf '%s' "$value" > "$target"
+        ;;
+      delete-generic-password)
+        if [ -f "$target" ]; then
+          rm -f "$target"
+        else
+          exit 44
+        fi
+        ;;
+      *)
+        exit 1
+        ;;
+    esac
     ;;
   *)
-    exit 1
+    case "$1" in
+      find-generic-password)
+        if [ -f "\${YORI_TEST_KEYCHAIN_FILE:?}" ]; then
+          cat "\${YORI_TEST_KEYCHAIN_FILE:?}"
+        else
+          printf '%s\\n' 'security: SecKeychainSearchCopyNext: The specified item could not be found in the keychain.' >&2
+          exit 44
+        fi
+        ;;
+      add-generic-password)
+        IFS= read -r token || exit 1
+        printf '%s' "$token" > "\${YORI_TEST_KEYCHAIN_FILE:?}"
+        ;;
+      delete-generic-password)
+        if [ -f "\${YORI_TEST_KEYCHAIN_FILE:?}" ]; then
+          rm -f "\${YORI_TEST_KEYCHAIN_FILE:?}"
+        else
+          exit 44
+        fi
+        ;;
+      *)
+        exit 1
+        ;;
+    esac
     ;;
 esac
 `;
@@ -108,7 +169,8 @@ export async function createCollectorFixture(): Promise<CollectorFixture> {
   const binDir = path.join(root, 'bin');
   const artifactDir = path.join(root, 'artifact');
   const gitRoot = path.join(root, 'repo');
-  await Promise.all([mkdir(home), mkdir(binDir), mkdir(artifactDir), mkdir(gitRoot)]);
+  const secretsDir = path.join(root, 'keychain-secrets');
+  await Promise.all([mkdir(home), mkdir(binDir), mkdir(artifactDir), mkdir(gitRoot), mkdir(secretsDir)]);
   await Promise.all([
     writeFile(path.join(binDir, 'git'), GIT_SHIM, { mode: 0o755 }),
     writeFile(path.join(binDir, 'security'), SECURITY_SHIM, { mode: 0o755 }),
@@ -125,6 +187,7 @@ export async function createCollectorFixture(): Promise<CollectorFixture> {
     apiLogPath: path.join(root, 'api-log.jsonl'),
     securityLogPath: path.join(root, 'security-log.txt'),
     keychainPath: path.join(root, 'keychain.txt'),
+    secretsDir,
   };
 }
 
@@ -216,10 +279,13 @@ export async function runRootCli(fixture: CollectorFixture, args: string[], opti
     // 実装はPATHではなくこれらの絶対path overrideを使う。未設定時だけ/usr/bin/security・/usr/bin/gitへ戻る。
     YORI_SECURITY_BIN: path.join(fixture.binDir, 'security'),
     YORI_GIT_BIN: path.join(fixture.binDir, 'git'),
+    // collector commandがadmin用SSH transportを起動しないよう、実sshではなく不在pathを既定にする。
+    YORI_SSH_BIN: path.join(fixture.binDir, 'ssh-not-configured'),
     YORI_TEST_GIT_ROOT: fixture.gitRoot,
     YORI_TEST_GIT_ORIGIN: fixture.gitOrigin,
     YORI_TEST_SECURITY_LOG: fixture.securityLogPath,
     YORI_TEST_KEYCHAIN_FILE: fixture.keychainPath,
+    YORI_TEST_SECRETS_DIR: fixture.secretsDir,
     YORI_TEST_API_SPEC: fixture.apiSpecPath,
     YORI_TEST_API_LOG: fixture.apiLogPath,
     // test/development専用override。標準installはpackage隣接のdist/collectorを読む。
@@ -349,10 +415,10 @@ export const DEFAULT_SETUP_RESPONSE: ApiResponse = {
     repository: 'github.com/example/repo',
     redaction_policy: {
       version: 3,
-      rules: [
-        { type: 'literal', value: 'fixture-rule' },
-        { type: 'assignment_key', value: 'fixture_key' },
-      ],
+      fields: ['fixture_field'],
+      terms: ['fixture-term'],
+      suspicion_mode: 'observe',
+      detector_version: 'initial-v1',
     },
   },
 };
@@ -385,6 +451,31 @@ export async function prepareCollectorInstall(fixture: CollectorFixture, options
   }
 }
 
+// setup APIのpolicy契約に依存せず、検証済みartifactからcollector:installと同じlayoutを直接作る。
+// collector:installが新policyへ追随する前でもstable launcher自体の挙動を検証するためのfixture。
+export async function installCollectorWithoutSetup(fixture: CollectorFixture, content: string): Promise<void> {
+  const agents = ['codex', 'claude_code'] as const;
+  for (const agent of agents) {
+    await writeHookJson(fixture, agent, agentHookFixture());
+  }
+  await writeCollectorArtifact(fixture, { version: DEFAULT_COLLECTOR_VERSION, content });
+  await writeFile(fixture.keychainPath, DEFAULT_TOKEN, 'utf8');
+  const artifact = await readCollectorArtifact({ ...process.env, YORI_COLLECTOR_ARTIFACT_DIR: fixture.artifactDir });
+  await writeCollectorVersion(fixture.home, artifact);
+  await writeCollectorLauncher(fixture.home);
+  await writeCollectorConfig(fixture.home, DEFAULT_API_URL);
+  const packageJson = JSON.parse(await readFile(path.join(REPO_ROOT, 'package.json'), 'utf8')) as { version: string };
+  await writeCollectorInstallState(collectorInstallStatePath(fixture.home), {
+    installer_version: packageJson.version,
+    collector_version: artifact.version,
+    checksum: artifact.checksum,
+    policy_version: null,
+  });
+  await commitCollectorHooks(
+    await planCollectorHooks(fixture.home, agents, collectorLauncherPath(fixture.home), collectorConfigPathFromHome(fixture.home), 'install'),
+  );
+}
+
 export async function collectorCommandsFor(fixture: CollectorFixture, agent: CollectorAgent): Promise<string[]> {
   const content = await readFile(hookPath(fixture, agent), 'utf8').catch(() => '');
   return content.length === 0 ? [] : collectorCommands(JSON.parse(content));
@@ -407,8 +498,11 @@ export function runShellCommand(fixture: CollectorFixture, command: string, envO
     HOME: fixture.home,
     YORI_SECURITY_BIN: path.join(fixture.binDir, 'security'),
     YORI_GIT_BIN: path.join(fixture.binDir, 'git'),
+    // launcher自体はadmin用SSH transportを持ち込まない。実sshを起動しないための既定。
+    YORI_SSH_BIN: path.join(fixture.binDir, 'ssh-not-configured'),
     YORI_TEST_SECURITY_LOG: fixture.securityLogPath,
     YORI_TEST_KEYCHAIN_FILE: fixture.keychainPath,
+    YORI_TEST_SECRETS_DIR: fixture.secretsDir,
     YORI_TEST_GIT_ROOT: fixture.gitRoot,
     YORI_TEST_GIT_ORIGIN: fixture.gitOrigin,
   };
@@ -421,3 +515,63 @@ export function runShellCommand(fixture: CollectorFixture, command: string, envO
   }
   return spawnSync('/bin/sh', ['-c', command], { cwd: fixture.gitRoot, encoding: 'utf8', env });
 }
+
+// known secretのlocal indexとKeychain itemを合成fixtureとして直接用意する。
+// 実値は明示的なsynthetic値だけを扱い、repositoryへ実秘密を入れない。
+export function collectorSecretsIndexPath(fixture: CollectorFixture): string {
+  return path.join(fixture.home, '.yori-collector', SECRETS_INDEX_FILE_NAME);
+}
+
+export async function readSecretsIndexText(fixture: CollectorFixture): Promise<string | null> {
+  return readFile(collectorSecretsIndexPath(fixture), 'utf8').catch(() => null);
+}
+
+// 厳密なindex契約の検証用。labels-only JSON arrayをそのまま書き込む。
+export async function writeSecretsIndexJson(fixture: CollectorFixture, value: unknown): Promise<void> {
+  const filePath = collectorSecretsIndexPath(fixture);
+  await mkdir(path.dirname(filePath), { recursive: true });
+  await writeFile(filePath, typeof value === 'string' ? value : JSON.stringify(value), 'utf8');
+}
+
+export async function writeSecretIndexLabels(fixture: CollectorFixture, labels: readonly string[]): Promise<void> {
+  await writeSecretsIndexJson(fixture, labels);
+}
+
+export async function readSecretIndexLabels(fixture: CollectorFixture): Promise<string[] | null> {
+  const text = await readSecretsIndexText(fixture);
+  if (text === null) {
+    return null;
+  }
+  try {
+    const parsed: unknown = JSON.parse(text);
+    return Array.isArray(parsed) && parsed.every((value) => typeof value === 'string') ? (parsed as string[]) : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function writeKeychainSecret(fixture: CollectorFixture, label: string, value: string): Promise<void> {
+  await mkdir(fixture.secretsDir, { recursive: true });
+  await writeFile(path.join(fixture.secretsDir, label), value, 'utf8');
+}
+
+export async function readKeychainSecret(fixture: CollectorFixture, label: string): Promise<string | null> {
+  return readFile(path.join(fixture.secretsDir, label), 'utf8').catch(() => null);
+}
+
+export async function readKeychainSecretLabels(fixture: CollectorFixture): Promise<string[]> {
+  const entries = await readdir(fixture.secretsDir).catch(() => [] as string[]);
+  return entries.map(String).sort();
+}
+
+export async function removeKeychainSecret(fixture: CollectorFixture, label: string): Promise<void> {
+  await rm(path.join(fixture.secretsDir, label), { force: true });
+}
+
+// launcherが子collector envへ渡したYORI_KNOWN_SECRETS_JSONを分類して出す合成bundle。
+export const KNOWN_SECRETS_BUNDLE =
+  "const raw = process.env.YORI_KNOWN_SECRETS_JSON;\n" +
+  "process.stdout.write('known-secrets:' + (raw === undefined ? 'UNSET' : raw) + '\\n');\n";
+
+// launcherがfail-closedで子を起動しないことの検出用。起動時だけmarkerを出す。
+export const KNOWN_SECRETS_MARKER_BUNDLE = "console.log('collector-known-secrets-child-spawned');\n";
