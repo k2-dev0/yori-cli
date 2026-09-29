@@ -16,7 +16,6 @@ import {
   type MemberRemoveOutput,
   type ProjectCreateInput,
   type ProjectCreateOutput,
-  type CustomRedactionRule,
   type RedactionListOutput,
   type RedactionReplaceInput,
   type RedactionReplaceOutput,
@@ -465,10 +464,11 @@ async function insertRedactionRules(client: PoolClient, companyId: string, rules
 
 // 会社のcurrent policyをCASで置換する。初回だけexpected_version 0を受ける。
 export async function replaceRedactionPolicy(pool: Pool, input: RedactionReplaceInput): Promise<AdminResult<RedactionReplaceOutput>> {
-  // Zodで構造を検証済みでも、placeholder・重複・正規化はboundary validatorを通してからDBへ渡す。
+  // admin公開valuesはliteralだけなのでtyped literal ruleへ変換し、placeholder・重複・正規化を
+  // boundary validatorで検証してからDBへ渡す。
   let validated: ValidatedRedactionRule[];
   try {
-    validated = validateCustomRedactionRules(input.rules);
+    validated = validateCustomRedactionRules(input.values.map((value) => ({ type: 'literal', value })));
   } catch {
     return { ok: false, code: 'invalid_input' };
   }
@@ -507,7 +507,7 @@ export async function replaceRedactionPolicy(pool: Pool, input: RedactionReplace
   );
 }
 
-// 会社のcurrent policyをversionとrulesだけで返す。未登録会社はversion 0・rules空にする。
+// 会社のcurrent policyをversionとliteral valuesだけで返す。未登録会社はversion 0・values空にする。
 export async function listRedactionPolicy(pool: Pool, companyId: string): Promise<AdminResult<RedactionListOutput>> {
   return withTransaction(
     pool,
@@ -516,25 +516,31 @@ export async function listRedactionPolicy(pool: Pool, companyId: string): Promis
       if (company.rows.length === 0) {
         return { ok: false, code: 'company_not_found' };
       }
-      // listはrule_type, normalized_valueの決定的順でtyped rulesを返す。
-      const result = await client.query<{ version: number; rule_type: string | null; value: string | null }>(
-        `SELECT p.version, r.rule_type, r.value
+      // literalだけをvalue昇順で返す。assignment_keyやnormalized_value不一致のrowは黙って除外せず失敗する。
+      const result = await client.query<{ version: number; rule_type: string | null; value: string | null; normalized_value: string | null }>(
+        `SELECT p.version, r.rule_type, r.value, r.normalized_value
            FROM company_redaction_policies p
            LEFT JOIN company_redaction_rules r ON r.company_id = p.company_id
           WHERE p.company_id = $1
-          ORDER BY r.rule_type, r.normalized_value`,
+          ORDER BY r.value`,
         [companyId],
       );
       const first = result.rows[0];
       if (first === undefined) {
-        return { ok: true, value: { version: 0, rules: [] } };
+        return { ok: true, value: { version: 0, values: [] } };
       }
-      const rules = result.rows.flatMap((row): CustomRedactionRule[] =>
-        row.rule_type === 'literal' || row.rule_type === 'assignment_key' ? [{ type: row.rule_type, value: row.value as string }] : [],
-      );
-      // DB制約で防いでいても、読み出し境界で不正ruleを適用しない。
-      validateCustomRedactionRules(rules);
-      return { ok: true, value: { version: first.version, rules } };
+      const values: string[] = [];
+      for (const row of result.rows) {
+        if (row.rule_type === null && row.value === null && row.normalized_value === null) {
+          continue;
+        }
+        if (row.rule_type !== 'literal' || row.value === null || row.normalized_value !== row.value) {
+          // admin公開契約はliteralだけ。未知ruleを隠した部分的成功にしない。
+          return { ok: false, code: 'internal_error' };
+        }
+        values.push(row.value);
+      }
+      return { ok: true, value: { version: first.version, values } };
     },
     [REQUIRED_MIGRATION, REDACTION_MIGRATION],
   );
