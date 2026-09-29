@@ -57,6 +57,10 @@ DATABASE_URL='<database-url>' npm run --silent yori -- <command> [argument]
 | `token:issue <file.json>` | 指定した社員の認証トークンを発行する |
 | `token:revoke <file.json>` | 認証トークンを失効させる |
 | `inspect <company-uuid>` | 指定した会社の社員、案件、案件メンバー、認証トークンを表示する |
+| `redaction:replace <file.json>` | 会社のcustom伏せ字policyをtyped ruleで置換する（詳細は[docs/admin.md](docs/admin.md)） |
+| `redaction:list <company-uuid>` | 会社のcustom伏せ字policyをtyped ruleで表示する（詳細は[docs/admin.md](docs/admin.md)） |
+| `project:repository:add <file.json>` | 案件へcanonical repository aliasを追加する（詳細は[docs/admin.md](docs/admin.md)） |
+| `project:repository:remove <file.json>` | 案件からrepository aliasを削除する（詳細は[docs/admin.md](docs/admin.md)） |
 | `collector:install` | 社員端末へcollectorを導入する（`DATABASE_URL`不要） |
 | `collector:update` | collector artifactを検証して切り替える（`DATABASE_URL`不要） |
 | `collector:doctor` | collector導入状態を秘密なしで診断する（`DATABASE_URL`不要） |
