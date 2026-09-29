@@ -1,22 +1,19 @@
 import { readFile } from 'node:fs/promises';
 import { z } from 'zod';
-import { validateCustomRedactionRules } from '../admin/redaction-rules.js';
+import { validateRedactionPolicy } from '../admin/redaction-rules.js';
 import { COLLECTOR_API_DEFAULT_URL, CollectorFailure } from './contract.js';
 
-// yori POST /v1/collector/setup の200応答。strict objectで未知field・不正UUID・上限超過を拒否する。
+// yori POST /v1/collector/setup の200応答。strict objectで未知field・不正UUID・policy契約違反を拒否する。
+// policyはadmin CLIと同じboundary validatorで検証し、不正なfields/terms/suspicion_modeを受け入れない。
 const collectorSetupResponseSchema = z.strictObject({
   project_id: z.uuid(),
   repository: z.string().min(1),
   redaction_policy: z.strictObject({
     version: z.number().int().min(0),
-    // yoriと同じliteral/assignment_keyのstrict union。空文字・重複・placeholder・上限・identifierと
-    // normalized_valueは共有validatorで検証する。
-    rules: z.array(
-      z.discriminatedUnion('type', [
-        z.strictObject({ type: z.literal('literal'), value: z.string() }),
-        z.strictObject({ type: z.literal('assignment_key'), value: z.string() }),
-      ]),
-    ),
+    fields: z.array(z.string()),
+    terms: z.array(z.string()),
+    suspicion_mode: z.enum(['observe', 'block']),
+    detector_version: z.literal('initial-v1'),
   }),
 });
 
@@ -92,7 +89,7 @@ export async function requestCollectorSetup(apiUrl: string, token: string, repos
       throw new CollectorFailure('collector_internal_error');
     }
     try {
-      validateCustomRedactionRules(parsed.data.redaction_policy.rules);
+      validateRedactionPolicy(parsed.data.redaction_policy);
     } catch {
       throw new CollectorFailure('collector_internal_error');
     }
