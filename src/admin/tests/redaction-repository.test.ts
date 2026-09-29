@@ -342,11 +342,24 @@ describe('redaction:replace / redaction:list', () => {
     assert.ok(policy !== null);
     assert.equal(policy.rows.length, 3, 'typeが異なる同名valueを拒否している');
 
-    const duplicateField = await replacePolicy(companyId, 1, { fields: ['passkey'], terms: [], suspicion_mode: 'observe' });
+    const duplicateField = await replacePolicy(companyId, 1, { fields: ['dup_FIELD', 'DUP_field'], terms: [], suspicion_mode: 'observe' });
     expectFail(duplicateField, 'invalid_input');
     const duplicateTerm = await replacePolicy(companyId, 1, { fields: [], terms: ['PASSKEY', 'PASSKEY'], suspicion_mode: 'observe' });
     expectFail(duplicateTerm, 'invalid_input');
     assert.equal((await storedPolicy(companyId))?.rows.length, 3, '重複拒否で既存ruleを変更している');
+  });
+
+  it('既存fieldのcaseだけを変える置換はversion CASで受理し、表記を更新する', async () => {
+    const companyId = await createCompany();
+    parseSuccessJson(await replacePolicy(companyId, 0, { fields: ['PassKey'], terms: [], suspicion_mode: 'observe' }));
+
+    const replaced = parseSuccessJson(await replacePolicy(companyId, 1, { fields: ['passkey'], terms: [], suspicion_mode: 'observe' }));
+    assert.deepEqual(replaced, { status: 'replaced', company_id: companyId, version: 2 });
+    assert.deepEqual((await listPolicy(companyId)).fields, ['passkey']);
+    const policy = await storedPolicy(companyId);
+    assert.ok(policy !== null);
+    assert.equal(policy.version, 2);
+    assert.deepEqual(storedValues(policy, 'field'), ['passkey']);
   });
 
   it('expected_versionは0以上の整数だけを受理する', async () => {
