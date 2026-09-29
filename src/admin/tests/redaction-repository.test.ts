@@ -112,7 +112,8 @@ async function storedRules(companyId: string): Promise<{ version: number; rules:
        FROM company_redaction_policies p
        LEFT JOIN company_redaction_rules r ON r.company_id = p.company_id
       WHERE p.company_id = $1
-      ORDER BY r.rule_type, r.normalized_value`,
+      -- 期待順（expectedOrderのcodepoint順）とDB locale collationの差でtestが揺れないようC collationで読む。
+      ORDER BY r.rule_type, r.normalized_value COLLATE "C"`,
     [companyId],
   );
   if (result.rows.length === 0) {
