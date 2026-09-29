@@ -347,7 +347,13 @@ export const DEFAULT_SETUP_RESPONSE: ApiResponse = {
   body: {
     project_id: '01930000-0000-7000-8000-000000000001',
     repository: 'github.com/example/repo',
-    redaction_policy: { version: 3, rules: ['fixture-rule'] },
+    redaction_policy: {
+      version: 3,
+      rules: [
+        { type: 'literal', value: 'fixture-rule' },
+        { type: 'assignment_key', value: 'fixture_key' },
+      ],
+    },
   },
 };
 
