@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { z } from 'zod';
-import { isValidCustomRedactionRules } from '../admin/redaction-rules.js';
+import { validateCustomRedactionRules } from '../admin/redaction-rules.js';
 import { COLLECTOR_API_DEFAULT_URL, CollectorFailure } from './contract.js';
 
 // yori POST /v1/collector/setup の200応答。strict objectで未知field・不正UUID・上限超過を拒否する。
@@ -9,8 +9,14 @@ const collectorSetupResponseSchema = z.strictObject({
   repository: z.string().min(1),
   redaction_policy: z.strictObject({
     version: z.number().int().min(0),
-    // 空文字・重複・placeholder fragment・100件/512cp上限をyori 0010契約で検証する。
-    rules: z.array(z.string()).refine((rules) => isValidCustomRedactionRules(rules), 'custom伏せ字ruleが不正です'),
+    // yoriと同じliteral/assignment_keyのstrict union。空文字・重複・placeholder・上限・identifierと
+    // normalized_valueは共有validatorで検証する。
+    rules: z.array(
+      z.discriminatedUnion('type', [
+        z.strictObject({ type: z.literal('literal'), value: z.string() }),
+        z.strictObject({ type: z.literal('assignment_key'), value: z.string() }),
+      ]),
+    ),
   }),
 });
 
@@ -83,6 +89,11 @@ export async function requestCollectorSetup(apiUrl: string, token: string, repos
     const body: unknown = await response.json().catch(() => null);
     const parsed = collectorSetupResponseSchema.safeParse(body);
     if (!parsed.success || parsed.data.repository !== repository) {
+      throw new CollectorFailure('collector_internal_error');
+    }
+    try {
+      validateCustomRedactionRules(parsed.data.redaction_policy.rules);
+    } catch {
       throw new CollectorFailure('collector_internal_error');
     }
     return {
