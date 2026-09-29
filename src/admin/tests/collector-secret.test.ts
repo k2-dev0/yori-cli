@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile, stat } from 'node:fs/promises';
+import { chmod, readFile, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import {
   assertCollectorFailure,
@@ -102,6 +102,45 @@ describe('collector:secret:add / list / remove', () => {
     });
   });
 
+  it('add --from-envは元の環境変数を削除してからsecurityを起動し、子processへ継承させない', async () => {
+    await withCollectorFixture(async (fixture) => {
+      const probeLogPath = path.join(fixture.root, 'security-env-probe.log');
+      const probeBin = path.join(fixture.binDir, 'security-env-probe');
+      // security子process自身のenvを確認してから既存shimへ委譲するsynthetic probe。
+      await writeFile(
+        probeBin,
+        [
+          '#!/bin/sh',
+          `if [ -n "\${${VALUE_ENV}:-}" ]; then`,
+          `  printf 'inherited\\n' >> "\${YORI_TEST_SECURITY_ENV_LOG:?}"`,
+          'else',
+          `  printf 'absent\\n' >> "\${YORI_TEST_SECURITY_ENV_LOG:?}"`,
+          'fi',
+          'exec "${YORI_TEST_REAL_SECURITY_BIN:?}" "$@"',
+          '',
+        ].join('\n'),
+        { mode: 0o755 },
+      );
+      await chmod(probeBin, 0o755);
+
+      const run = await runRootCli(fixture, ['collector:secret:add', LABEL_BETA, '--from-env', VALUE_ENV], {
+        env: {
+          [VALUE_ENV]: VALUE_BETA,
+          YORI_SECURITY_BIN: probeBin,
+          YORI_TEST_SECURITY_ENV_LOG: probeLogPath,
+          YORI_TEST_REAL_SECURITY_BIN: path.join(fixture.binDir, 'security'),
+        },
+      });
+
+      assert.deepEqual(parseCollectorSuccess(run), { status: 'stored', label: LABEL_BETA });
+      const probes = (await readFile(probeLogPath, 'utf8')).trim().split('\n');
+      assert.ok(probes.length >= 2, `securityの呼出し回数が足りない: ${JSON.stringify(probes)}`);
+      assert.deepEqual([...new Set(probes)], ['absent'], `${VALUE_ENV}がsecurity子processへ継承されている`);
+      assert.equal(await readKeychainSecret(fixture, LABEL_BETA), VALUE_BETA);
+      assert.deepEqual(await readSecretIndexLabels(fixture), [LABEL_BETA]);
+    });
+  });
+
   it('listはindexのlabelだけをソートして返し、index未作成なら空配列を返す', async () => {
     await withCollectorFixture(async (fixture) => {
       const empty = parseCollectorSuccess(await runRootCli(fixture, ['collector:secret:list']));
@@ -169,6 +208,86 @@ describe('collector:secret:add / list / remove', () => {
       assert.deepEqual(await readSecretIndexLabels(fixture), labels, '上限超過でindexを変更している');
       assert.equal(await readKeychainSecret(fixture, 'overflow-label'), null, '上限超過でKeychain itemを作成している');
       assert.deepEqual(await readKeychainSecretLabels(fixture), labels);
+    });
+  });
+  it('security出力の末尾改行だけを落とし、値の前後空白を保持する', async () => {
+    await withCollectorFixture(async (fixture) => {
+      const padded = '  padded secret value  ';
+      const stored = parseCollectorSuccess(
+        await runRootCli(fixture, ['collector:secret:add', LABEL_ALPHA], { input: `${padded}\n` }),
+      );
+      assert.deepEqual(stored, { status: 'stored', label: LABEL_ALPHA });
+      assert.equal(await readKeychainSecret(fixture, LABEL_ALPHA), padded, 'Keychain値の空白が変わっている');
+      assert.deepEqual(await readSecretIndexLabels(fixture), [LABEL_ALPHA]);
+
+      // trimmed値と同一視すると、prompt保存後の重複判定が空白違いを通してしまう。
+      const duplicate = await runRootCli(fixture, ['collector:secret:add', LABEL_BETA], { input: `${padded}\n` });
+      assertCollectorFailure(duplicate, [padded, padded.trim()]);
+      assert.equal(await readKeychainSecret(fixture, LABEL_BETA), null, '重複値のitemが残っている');
+      assert.deepEqual(await readSecretIndexLabels(fixture), [LABEL_ALPHA]);
+    });
+  });
+
+  it('labelは1〜128 code pointsだけを許可し、境界外はKeychainとindexを変更しない', async () => {
+    await withCollectorFixture(async (fixture) => {
+      const invalidLabels = ['', 'a'.repeat(129), '😀'.repeat(129)];
+      for (const label of invalidLabels) {
+        const run = await runRootCli(fixture, ['collector:secret:add', label], { input: `${VALUE_ALPHA}\n` });
+        assertCollectorFailure(run, [VALUE_ALPHA, ...(label === '' ? [] : [label])]);
+        assert.deepEqual(await readSecretIndexLabels(fixture), null, `不正label (${label.length} UTF-16 units) でindexを作成している`);
+      }
+      // サロゲートペアを1 code pointとして数え、128 code pointsのlabelを受理する。
+      const astral128 = '😀'.repeat(128);
+      await writeSecretIndexLabels(fixture, [astral128]);
+      const listed = parseCollectorSuccess(await runRootCli(fixture, ['collector:secret:list']));
+      assert.deepEqual(listed, { labels: [astral128] });
+    });
+  });
+
+  it('labelの境界値128 code pointsを受け入れ、129 code pointsを拒否する', async () => {
+    await withCollectorFixture(async (fixture) => {
+      const label128 = 'a'.repeat(128);
+      const stored = parseCollectorSuccess(
+        await runRootCli(fixture, ['collector:secret:add', label128], { input: `${VALUE_ALPHA}\n` }),
+      );
+      assert.deepEqual(stored, { status: 'stored', label: label128 });
+      assert.deepEqual(await readSecretIndexLabels(fixture), [label128]);
+      assert.equal(await readKeychainSecret(fixture, label128), VALUE_ALPHA);
+
+      const removed = parseCollectorSuccess(await runRootCli(fixture, ['collector:secret:remove', label128]));
+      assert.deepEqual(removed, { status: 'removed', label: label128 });
+      assert.deepEqual(await readSecretIndexLabels(fixture), []);
+    });
+  });
+
+  it('index書き込みが失敗したadd/removeはKeychainをrollbackし、indexを変更しない', async () => {
+    await withCollectorFixture(async (fixture) => {
+      await runRootCli(fixture, ['collector:secret:add', LABEL_ALPHA], { input: `${VALUE_ALPHA}\n` });
+      const stateDir = path.dirname(collectorSecretsIndexPath(fixture));
+      await chmod(stateDir, 0o500);
+      try {
+        const add = await runRootCli(fixture, ['collector:secret:add', LABEL_BETA], { input: `${VALUE_BETA}\n` });
+        assert.equal(assertCollectorFailure(add, [VALUE_BETA]), 'admin: collector_internal_error\n');
+        assert.equal(await readKeychainSecret(fixture, LABEL_BETA), null, 'add失敗で新規itemをrollbackしていない');
+
+        const remove = await runRootCli(fixture, ['collector:secret:remove', LABEL_ALPHA]);
+        assert.equal(assertCollectorFailure(remove, [VALUE_ALPHA]), 'admin: collector_internal_error\n');
+        assert.equal(await readKeychainSecret(fixture, LABEL_ALPHA), VALUE_ALPHA, 'remove失敗で削除itemを復元していない');
+        assert.deepEqual(await readSecretIndexLabels(fixture), [LABEL_ALPHA], '失敗でindexを変更している');
+      } finally {
+        await chmod(stateDir, 0o700);
+      }
+    });
+  });
+
+  it('prompt保存後の値が制限違反なら、上書き前のKeychain値を復元して拒否する', async () => {
+    await withCollectorFixture(async (fixture) => {
+      await runRootCli(fixture, ['collector:secret:add', LABEL_ALPHA], { input: `${VALUE_ALPHA}\n` });
+      const short = 'short12';
+      const run = await runRootCli(fixture, ['collector:secret:add', LABEL_ALPHA], { input: `${short}\n` });
+      assertCollectorFailure(run, [short, VALUE_ALPHA]);
+      assert.equal(await readKeychainSecret(fixture, LABEL_ALPHA), VALUE_ALPHA, '上書きしたitemを元の値へ戻していない');
+      assert.deepEqual(await readSecretIndexLabels(fixture), [LABEL_ALPHA]);
     });
   });
 });
