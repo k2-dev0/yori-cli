@@ -170,7 +170,7 @@ describe('collector:doctor', () => {
       for (const text of [run.stdout, run.stderr]) {
         assert.ok(!text.includes(DEFAULT_TOKEN), 'doctor出力へtokenが出ている');
         assert.ok(!text.includes('Bearer'), 'doctor出力へAuthorizationが出ている');
-        assert.ok(!text.includes('fixture-rule'), 'doctor出力へruleが出ている');
+        assert.ok(!text.includes('fixture-term'), 'doctor出力へpolicy valueが出ている');
       }
       // doctorはKeychain promptをせず、状態も変更しない。
       assert.equal((await readSecurityCalls(fixture)).filter((args) => args[0] === 'add-generic-password').length, 0);
