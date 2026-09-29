@@ -527,21 +527,32 @@ describe('collector:install', () => {
     });
   });
 
-  it('setup応答のpolicy rulesを0010契約で検証し、rule値を失敗出力へ出さない', async () => {
+  it('setup応答のtyped policy rulesを0010契約で検証し、rule値を失敗出力へ出さない', async () => {
+    const literal = (value: string) => ({ type: 'literal', value });
+    const assignmentKey = (value: string) => ({ type: 'assignment_key', value });
     interface InvalidSetup {
-      rules: string[];
+      rules: unknown[];
       repository?: string;
       project_id?: string;
     }
     const invalidSetups: InvalidSetup[] = [
-      { rules: [''] },
-      { rules: ['dup-rule-marker', 'dup-rule-marker'] },
-      { rules: ['[REDACTED:custom]'] },
-      { rules: ['[REDACTED:jwt]'] },
-      { rules: ['x'.repeat(513)] },
-      { rules: Array.from({ length: 101 }, (_, index) => `over-${index}`) },
-      { rules: ['ok-rule'], repository: 'github.com/example/other' },
-      { rules: ['ok-rule'], project_id: 'not-a-uuid' },
+      { rules: [literal('')] },
+      { rules: [literal('dup-rule-marker'), literal('dup-rule-marker')] },
+      { rules: [literal('[REDACTED:custom]')] },
+      { rules: [literal('[REDACTED:jwt]')] },
+      { rules: [literal('x'.repeat(513))] },
+      { rules: [assignmentKey('dup-key-marker'), assignmentKey('DUP-KEY-MARKER')] },
+      { rules: [assignmentKey('1pass')] },
+      { rules: [assignmentKey('pass key')] },
+      { rules: [assignmentKey('REDACTED')] },
+      { rules: [assignmentKey('a'.repeat(129))] },
+      { rules: Array.from({ length: 101 }, (_, index) => literal(`over-${index}`)) },
+      { rules: ['string-rule'] },
+      { rules: [{ type: 'regex', value: 'x' }] },
+      { rules: [{ type: 'literal' }] },
+      { rules: [{ type: 'literal', value: 'ok', extra: true }] },
+      { rules: [literal('ok-rule')], repository: 'github.com/example/other' },
+      { rules: [literal('ok-rule')], project_id: 'not-a-uuid' },
     ];
     for (const invalid of invalidSetups) {
       await withCollectorFixture(async (fixture) => {
@@ -555,12 +566,48 @@ describe('collector:install', () => {
           },
         }]);
         const run = await runRootCli(fixture, ['collector:install']);
-        assertCollectorFailure(run, [DEFAULT_TOKEN, 'dup-rule-marker', '[REDACTED:custom]', '[REDACTED:jwt]']);
+        assertCollectorFailure(run, [
+          DEFAULT_TOKEN,
+          'dup-rule-marker',
+          'dup-key-marker',
+          '[REDACTED:custom]',
+          '[REDACTED:jwt]',
+          'string-rule',
+        ]);
         assert.equal(run.stderr, 'admin: collector_internal_error\n');
         assert.equal(existsSync(collectorConfigPath(fixture)), false);
         assert.equal(existsSync(collectorInstallRoot(fixture)), false);
       });
     }
+  });
+
+  it('typed setupのliteral case違いとassignment_keyを受理してinstallする', async () => {
+    await withCollectorFixture(async (fixture) => {
+      await prepareCollectorInstall(fixture, {
+        tokenRegistered: true,
+        setupResponse: {
+          status: 200,
+          body: {
+            project_id: '01930000-0000-7000-8000-000000000001',
+            repository: 'github.com/example/repo',
+            redaction_policy: {
+              version: 5,
+              rules: [
+                { type: 'literal', value: 'Case' },
+                { type: 'literal', value: 'case' },
+                { type: 'assignment_key', value: 'pass_key' },
+              ],
+            },
+          },
+        },
+      });
+      const output = parseCollectorSuccess(await runRootCli(fixture, ['collector:install']));
+      assert.equal(output.status, 'installed');
+      assert.equal(existsSync(collectorConfigPath(fixture)), true);
+      const installState = JSON.parse(await readText(path.join(collectorInstallRoot(fixture), 'install.json'))) as Record<string, unknown>;
+      assert.equal(installState.policy_version, 5);
+      assert.ok(!JSON.stringify(installState).includes('pass_key'), 'install.jsonへruleを保存している');
+    });
   });
 
   it('書き込み不能なHOMEでは無変更で失敗する', async () => {
