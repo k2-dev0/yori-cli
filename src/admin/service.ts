@@ -17,6 +17,7 @@ import {
   type ProjectCreateInput,
   type ProjectCreateOutput,
   type RedactionListOutput,
+  type RedactionPolicy,
   type RedactionReplaceInput,
   type RedactionReplaceOutput,
   type RepositoryAddOutput,
@@ -27,7 +28,7 @@ import {
   type TokenRevokeInput,
   type TokenRevokeOutput,
 } from './contract.js';
-import { validateCustomRedactionRules, type ValidatedRedactionRule } from './redaction-rules.js';
+import { validateRedactionPolicy } from './redaction-rules.js';
 import { generateAuthToken, hashAuthToken } from './token.js';
 
 export interface TokenIssueOptions {
@@ -40,6 +41,7 @@ const MEMBER_CONSTRAINT = 'project_members_pkey';
 const TOKEN_HASH_CONSTRAINT = 'auth_tokens_token_hash_key';
 const REQUIRED_MIGRATION = '0001_init.sql';
 const REDACTION_MIGRATION = '0010_custom_redaction.sql';
+const REDACTION_DETECTOR_VERSION = 'initial-v1';
 
 // PostgreSQLの一意制約違反だけを対象にする。他のDB障害を再生成や成功扱いで隠さない。
 function isUniqueViolation(error: unknown, constraint: string): boolean {
@@ -451,24 +453,39 @@ export async function inspectCompany(pool: Pool, companyId: string): Promise<Adm
   });
 }
 
-async function insertRedactionRules(client: PoolClient, companyId: string, rules: readonly ValidatedRedactionRule[]): Promise<void> {
-  for (const rule of rules) {
+// 検証済みpolicyのfield/termを0010の正規化規則で保存する。
+// fieldはcase-insensitive照合用にlower(value)、termはcase-sensitive照合のためvalueそのものを使う。
+async function insertRedactionRules(client: PoolClient, companyId: string, policy: RedactionPolicy): Promise<void> {
+  for (const field of policy.fields) {
     await client.query('INSERT INTO company_redaction_rules (company_id, rule_type, value, normalized_value) VALUES ($1, $2, $3, $4)', [
       companyId,
-      rule.rule.type,
-      rule.rule.value,
-      rule.normalized_value,
+      'field',
+      field,
+      field.toLowerCase(),
+    ]);
+  }
+  for (const term of policy.terms) {
+    await client.query('INSERT INTO company_redaction_rules (company_id, rule_type, value, normalized_value) VALUES ($1, $2, $3, $4)', [
+      companyId,
+      'term',
+      term,
+      term,
     ]);
   }
 }
 
 // 会社のcurrent policyをCASで置換する。初回だけexpected_version 0を受ける。
 export async function replaceRedactionPolicy(pool: Pool, input: RedactionReplaceInput): Promise<AdminResult<RedactionReplaceOutput>> {
-  // admin公開valuesはliteralだけなのでtyped literal ruleへ変換し、placeholder・重複・正規化を
-  // boundary validatorで検証してからDBへ渡す。
-  let validated: ValidatedRedactionRule[];
+  // fields/terms/suspicion_modeはDBへ触れる前に0010契約で検証し、不正入力では何も変更しない。
+  let policy: RedactionPolicy;
   try {
-    validated = validateCustomRedactionRules(input.values.map((value) => ({ type: 'literal', value })));
+    policy = validateRedactionPolicy({
+      version: input.expected_version,
+      fields: input.fields,
+      terms: input.terms,
+      suspicion_mode: input.suspicion_mode,
+      detector_version: REDACTION_DETECTOR_VERSION,
+    });
   } catch {
     return { ok: false, code: 'invalid_input' };
   }
@@ -479,35 +496,40 @@ export async function replaceRedactionPolicy(pool: Pool, input: RedactionReplace
       if (company.rows.length === 0) {
         return { ok: false, code: 'company_not_found' };
       }
-      const policy = await client.query<{ version: number }>('SELECT version FROM company_redaction_policies WHERE company_id = $1 FOR UPDATE', [
-        input.company_id,
-      ]);
-      const row = policy.rows[0];
+      const existing = await client.query<{ version: number }>(
+        'SELECT version FROM company_redaction_policies WHERE company_id = $1 FOR UPDATE',
+        [input.company_id],
+      );
+      const row = existing.rows[0];
       if (row === undefined) {
         if (input.expected_version !== 0) {
           return { ok: false, code: 'redaction_policy_not_found' };
         }
-        await client.query('INSERT INTO company_redaction_policies (company_id, version) VALUES ($1, 1)', [input.company_id]);
-        await insertRedactionRules(client, input.company_id, validated);
+        await client.query(
+          'INSERT INTO company_redaction_policies (company_id, version, suspicion_mode, detector_version) VALUES ($1, 1, $2, $3)',
+          [input.company_id, policy.suspicion_mode, policy.detector_version],
+        );
+        await insertRedactionRules(client, input.company_id, policy);
         return { ok: true, value: { status: 'replaced', company_id: input.company_id, version: 1 } };
       }
       if (row.version !== input.expected_version) {
         return { ok: false, code: 'redaction_policy_conflict' };
       }
       await client.query('DELETE FROM company_redaction_rules WHERE company_id = $1', [input.company_id]);
-      await insertRedactionRules(client, input.company_id, validated);
+      await insertRedactionRules(client, input.company_id, policy);
       const nextVersion = row.version + 1;
-      await client.query('UPDATE company_redaction_policies SET version = $2, updated_at = now() WHERE company_id = $1', [
-        input.company_id,
-        nextVersion,
-      ]);
+      await client.query(
+        'UPDATE company_redaction_policies SET version = $2, suspicion_mode = $3, detector_version = $4, updated_at = now() WHERE company_id = $1',
+        [input.company_id, nextVersion, policy.suspicion_mode, policy.detector_version],
+      );
       return { ok: true, value: { status: 'replaced', company_id: input.company_id, version: nextVersion } };
     },
     [REQUIRED_MIGRATION, REDACTION_MIGRATION],
   );
 }
 
-// 会社のcurrent policyをversionとliteral valuesだけで返す。未登録会社はversion 0・values空にする。
+// 会社のcurrent policyをversion・fields・terms・suspicion_mode・detector_versionだけで返す。
+// policy未登録の会社はversion 0・field/term空・既定observeを返す。
 export async function listRedactionPolicy(pool: Pool, companyId: string): Promise<AdminResult<RedactionListOutput>> {
   return withTransaction(
     pool,
@@ -516,31 +538,52 @@ export async function listRedactionPolicy(pool: Pool, companyId: string): Promis
       if (company.rows.length === 0) {
         return { ok: false, code: 'company_not_found' };
       }
-      // literalだけをvalue昇順で返す。assignment_keyやnormalized_value不一致のrowは黙って除外せず失敗する。
-      const result = await client.query<{ version: number; rule_type: string | null; value: string | null; normalized_value: string | null }>(
-        `SELECT p.version, r.rule_type, r.value, r.normalized_value
-           FROM company_redaction_policies p
-           LEFT JOIN company_redaction_rules r ON r.company_id = p.company_id
-          WHERE p.company_id = $1
-          ORDER BY r.value`,
+      const policy = await client.query<{ version: number; suspicion_mode: string; detector_version: string }>(
+        'SELECT version, suspicion_mode, detector_version FROM company_redaction_policies WHERE company_id = $1',
         [companyId],
       );
-      const first = result.rows[0];
-      if (first === undefined) {
-        return { ok: true, value: { version: 0, values: [] } };
+      const row = policy.rows[0];
+      if (row === undefined) {
+        return {
+          ok: true,
+          value: { version: 0, fields: [], terms: [], suspicion_mode: 'observe', detector_version: 'initial-v1' },
+        };
       }
-      const values: string[] = [];
-      for (const row of result.rows) {
-        if (row.rule_type === null && row.value === null && row.normalized_value === null) {
-          continue;
-        }
-        if (row.rule_type !== 'literal' || row.value === null || row.normalized_value !== row.value) {
-          // admin公開契約はliteralだけ。未知ruleを隠した部分的成功にしない。
+      if (
+        (row.suspicion_mode !== 'observe' && row.suspicion_mode !== 'block') ||
+        row.detector_version !== REDACTION_DETECTOR_VERSION
+      ) {
+        // 0010のCHECKを迂回した行を部分的に隠さず失敗させる。
+        return { ok: false, code: 'internal_error' };
+      }
+      const rules = await client.query<{ rule_type: string; value: string; normalized_value: string }>(
+        'SELECT rule_type, value, normalized_value FROM company_redaction_rules WHERE company_id = $1',
+        [companyId],
+      );
+      const fields: string[] = [];
+      const terms: string[] = [];
+      for (const rule of rules.rows) {
+        if (rule.rule_type === 'field' && rule.normalized_value === rule.value.toLowerCase()) {
+          fields.push(rule.value);
+        } else if (rule.rule_type === 'term' && rule.normalized_value === rule.value) {
+          terms.push(rule.value);
+        } else {
+          // 0010契約外のruleを隠した部分的成功にしない。
           return { ok: false, code: 'internal_error' };
         }
-        values.push(row.value);
       }
-      return { ok: true, value: { version: first.version, values } };
+      fields.sort();
+      terms.sort();
+      return {
+        ok: true,
+        value: {
+          version: row.version,
+          fields,
+          terms,
+          suspicion_mode: row.suspicion_mode,
+          detector_version: REDACTION_DETECTOR_VERSION,
+        },
+      };
     },
     [REQUIRED_MIGRATION, REDACTION_MIGRATION],
   );
