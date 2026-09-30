@@ -5,6 +5,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import {
   DEFAULT_COLLECTOR_BUNDLE,
+  DEFAULT_COLLECTOR_GIT_SHA,
   DEFAULT_COLLECTOR_VERSION,
   DEFAULT_SETUP_RESPONSE,
   DEFAULT_TOKEN,
@@ -116,9 +117,10 @@ describe('collector:update', () => {
       // update後のinstall.jsonは新collector versionとchecksumへ切り替わり、初回setup policy_versionを保持する。
       const installState = JSON.parse(await readText(path.join(collectorInstallRoot(fixture), 'install.json'))) as Record<string, unknown>;
       const packageJson = JSON.parse(await readText(path.join(REPO_ROOT, 'package.json'))) as { version: string };
-      assert.deepEqual(Object.keys(installState).sort(), ['checksum', 'collector_version', 'installer_version', 'policy_version']);
+      assert.deepEqual(Object.keys(installState).sort(), ['checksum', 'collector_version', 'git_sha', 'installer_version', 'policy_version']);
       assert.equal(installState.installer_version, packageJson.version);
       assert.equal(installState.collector_version, V2_VERSION);
+      assert.equal(installState.git_sha, DEFAULT_COLLECTOR_GIT_SHA);
       assert.equal(installState.checksum, sha256Hex(V2_BUNDLE));
       assert.equal(installState.policy_version, 3);
     });
@@ -150,6 +152,26 @@ describe('collector:update', () => {
         assert.equal(await readText(hookPath(fixture, agent)), hookBefore[index]);
       }
     });
+  });
+
+  it('同一versionでGit SHAまたはchecksumが異なるartifactを通常更新として扱わない', async () => {
+    for (const [label, artifact] of [
+      ['Git SHA', { version: DEFAULT_COLLECTOR_VERSION, content: DEFAULT_COLLECTOR_BUNDLE, gitSha: '2'.repeat(40) }],
+      ['checksum', { version: DEFAULT_COLLECTOR_VERSION, content: V2_BUNDLE, gitSha: DEFAULT_COLLECTOR_GIT_SHA }],
+    ] as const) {
+      await withCollectorFixture(async (fixture) => {
+        await installV1(fixture);
+        const stateBefore = await readText(path.join(collectorInstallRoot(fixture), 'install.json'));
+        const bundlePath = path.join(collectorVersionDir(fixture, DEFAULT_COLLECTOR_VERSION), 'yori-collector.mjs');
+        const bundleBefore = await readText(bundlePath);
+        await writeCollectorArtifact(fixture, artifact);
+        const run = await runRootCli(fixture, ['collector:update']);
+        assert.equal(run.code, 1, `${label}不一致を成功扱いしている`);
+        assert.equal(run.stderr, 'admin: collector_artifact_invalid\n');
+        assert.equal(await readText(bundlePath), bundleBefore, `${label}不一致でbundleを書き換えている`);
+        assert.equal(await readText(path.join(collectorInstallRoot(fixture), 'install.json')), stateBefore, `${label}不一致でstateを書き換えている`);
+      });
+    }
   });
 });
 
