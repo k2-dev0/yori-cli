@@ -18,7 +18,7 @@ npx yori-cli collector:install
 - hookは固定のlocal artifact（`~/.local/share/yori/collector/versions/<version>/`）をstable launcher経由で呼び、npxやlatestへ依存しません。manifestとinstall stateはcollector version・Git SHA・SHA-256 checksumを保持し、同一versionで識別情報が違うartifactは拒否します。
 - 設定は`~/.yori-collector.json`、stateは`~/.yori-collector`、token環境変数は`YORI_COLLECTOR_TOKEN`。
 - `project:add`はcwdのGit remoteを社員tokenの会社へ登録し、新規は`done`、登録済みは`already`を返します。同じ会社の社員は登録済みprojectを共通利用します。
-- `me`は通常tokenで本人・会社・現在token・会社projectを表示します。`company:show`、`employee:add`、API版token管理は別Keychain service `online.yori.admin`のcompany admin tokenを使い、通常collector tokenを上書きしません。
+- `me`は通常tokenで本人・会社・現在token・会社projectを表示します。`company:show`、`employee:add`、`employee:rename`、API版token管理は別Keychain service `online.yori.admin`のcompany admin tokenを使い、通常collector tokenを上書きしません。
 
 継続運用:
 
@@ -90,6 +90,7 @@ DATABASE_URL='<database-url>' npm run --silent yori -- <command> [argument]
 | `project:create <file.json>` | 指定した会社に案件を登録する |
 | `project:add` | cwdのrepositoryを社員tokenの会社へ登録する（JSON・`DATABASE_URL`不要） |
 | `employee:add <display-name> [--issue-token]` | company admin tokenで会社へ社員を追加し、option指定時はemployee tokenも続けて発行する（JSON・`DATABASE_URL`不要） |
+| `employee:rename <employee-id> <new-display-name>` | company admin tokenで既存社員の表示名を変更する（JSON・`DATABASE_URL`不要） |
 | `member:add <file.json>` | 旧DB管理用。案件に社員を追加する |
 | `member:remove <file.json>` | 案件から社員を外す |
 | `token:issue <file.json>` | 指定した社員の認証トークンを発行する |
@@ -179,6 +180,15 @@ DATABASE_URL='<database-url>' npm run --silent yori -- <command> [argument]
 ```
 
 `--issue-token`なしではtokenを発行しない。指定時は社員作成の成功後に既存token APIをemployee scopeで呼び、生tokenを成功出力へ一度だけ含める。token発行だけが失敗した場合、社員は作成済みなので`company:show`でemployee IDを確認し、`token:issue <employee-id> --scope employee`を再実行する。同じ会社のprojectは全社員が共通利用するため、projectごとの所属追加は不要。
+
+### `employee:rename`
+
+```text
+入力:     employee:rename <employee-id> "Alicia"
+成功出力: { "status": "done", "employee_id": "<uuid>", "display_name": "Alicia" }
+```
+
+社員レコードの表示名だけを変更する。既存token・会話履歴・project accessは維持する。
 
 ### `member:add <file.json>`
 
