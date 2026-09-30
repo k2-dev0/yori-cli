@@ -35,6 +35,11 @@ const companyResponseSchema = z.strictObject({
   tokens: z.array(tokenMetadataSchema),
 });
 const memberCreateResponseSchema = employeeSchema.extend({ status: z.literal('done') });
+const employeeRenameResponseSchema = z.strictObject({
+  status: z.literal('done'),
+  employee_id: z.uuid(),
+  display_name: z.string().min(1),
+});
 const issueResponseSchema = z.strictObject({
   status: z.literal('done'),
   token_id: z.uuid(),
@@ -51,6 +56,7 @@ export type TokenScope = z.infer<typeof tokenScopeSchema>;
 export type MeOutput = z.infer<typeof meResponseSchema>;
 export type CompanyOutput = z.infer<typeof companyResponseSchema>;
 export type MemberCreateOutput = z.infer<typeof memberCreateResponseSchema>;
+export type EmployeeRenameOutput = z.infer<typeof employeeRenameResponseSchema>;
 export type TokenIssueOutput = z.infer<typeof issueResponseSchema>;
 export type TokenRevokeOutput = z.infer<typeof revokeResponseSchema>;
 export interface MemberCreateWithTokenOutput {
@@ -200,6 +206,27 @@ export async function createMemberWithTokenViaApi(
         token: issued.token,
       };
     }),
+  );
+}
+
+export async function renameEmployeeViaApi(
+  env: NodeJS.ProcessEnv,
+  employeeId: string,
+  displayName: string,
+): Promise<AdminResult<EmployeeRenameOutput>> {
+  return accountResult(() =>
+    withAccountToken(env, true, (apiUrl, token) =>
+      requestJson(
+        apiUrl,
+        token,
+        `/v1/employees/${employeeId}`,
+        { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ display_name: displayName }) },
+        200,
+        employeeRenameResponseSchema,
+        'employee_not_found',
+        'internal_error',
+      ),
+    ),
   );
 }
 
