@@ -20,7 +20,7 @@ npx --yes --package=yori-cli@<reviewed-version> yori inspect <company-uuid>
 
 `DATABASE_URL` はargvで受け取らない。未設定・空の場合、`inspect` / `redaction:replace` / `redaction:list`は本番server `yori-production` の `/srv/yori` で `docker compose -p yori --env-file /etc/yori/yori.env -f deployment/compose.yaml --profile tools run --rm --no-deps -T` を実行し、固定package version（`yori-cli@<package version>`）へ `/usr/bin/ssh`（test/開発時は `YORI_SSH_BIN`）で委ねる。それ以外のDB commandは`invalid_admin_config`で終了する。policy JSONは0600の一時fileだけへ置いてtrapで削除し、containerへread-only mountしてargv・stdout/stderrへ出さない。remoteの既知admin codeだけをそのまま返し、未知code・ssh transport failure・応答契約違反は `internal_error` へ縮退する。本番Composeはyori本体と同じDBの3値からURLを構成する。
 
-`collector:install` / `collector:update` / `collector:doctor` / `collector:uninstall` / `collector:secret:*` はDBを使わず、`DATABASE_URL` を要求しない。macOS専用で、他platformでは `unsupported_platform` で端末を変更せずに終了する。導入手順と保持するfileは [README](../README.md) を参照。
+`collector:install` / `collector:update` / `collector:doctor` / `collector:backfill` / `collector:uninstall` / `collector:secret:*` はDBを使わず、`DATABASE_URL` を要求しない。macOS専用で、他platformでは `unsupported_platform` で端末を変更せずに終了する。導入手順と保持するfileは [README](../README.md) を参照。
 
 ### リポジトリ内（開発時）
 
@@ -301,7 +301,8 @@ repositoryはUTF-8で1024バイト以内。host小文字・先頭slashなし・�
 | `collector_invalid_request` / `collector_unauthorized` | setup APIが400 / 401を返した。collector:secretのlabel・値・上限・未登録label違反も `collector_invalid_request` |
 | `launcher_error`（collector stderr） | stable launcherがindex不正・Keychain item欠落・known secret制限違反を検出し、子collectorを起動しなかった |
 | `collector_internal_error` | setup APIの500・transport error・応答契約違反。collector:secret indexの破損も含む |
-| `collector_not_installed` | `collector:update` の対象となるinstall状態が無い |
+| `collector_not_installed` | `collector:update` / `collector:backfill` の対象となるinstall状態が無い |
+| `collector_backfill_error` | 配布collectorのbackfillが固定契約外の出力または失敗を返した |
 | `collector_install_error` | 端末側fileへの書き込みに失敗し、全成果物をrollbackした |
 | `collector_rollback_failed` | 失敗時のrollback自体に失敗した |
 
