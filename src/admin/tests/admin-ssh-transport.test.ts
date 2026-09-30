@@ -18,7 +18,7 @@ import {
 // 合成したbash scriptだけをstdinへ渡す。実ssh・実host・実networkへは接続しない。
 // remote composeにcli serviceは無いため、tools profileのmigrate serviceを--entrypoint npxで
 // 一時Node環境として上書きし、migrationは実行しない。
-// inspect・company:create等の他のadmin commandはDATABASE_URL欠落をinvalid_admin_configのまま拒否する。
+// inspectも同じSSH transportへ委ね、company:create等の書込みcommandはDATABASE_URL欠落を拒否する。
 // policy text等の入力は0600の一時fileを含むstdin script内だけに置き、argv・エラー出力・logへ出さない。
 const SSH_HOST = 'yori-production';
 const COMPANY_ID = '01930000-0000-7000-8000-000000000042';
@@ -111,25 +111,46 @@ function assertReplaceTempInputContract(stdin: string): void {
 }
 
 describe('admin commandのmacOS SSH transport', () => {
-  it('DATABASE_URLなしのinspectとcompany:createはssh transportへ委ねずinvalid_admin_configで拒否する', async () => {
-    const inspect = await runTransport(['inspect', COMPANY_ID]);
-    assert.equal(inspect.run.code, 1, `inspectが失敗していない: stdout=${inspect.run.stdout} stderr=${inspect.run.stderr}`);
-    assert.equal(inspect.run.stdout, '');
-    assert.equal(inspect.run.stderr, 'admin: invalid_admin_config\n');
-    assert.equal(inspect.invocationCount, 0, 'inspectがadmin用ssh transportを起動している');
-
+  it('DATABASE_URLなしのcompany:createはssh transportへ委ねずinvalid_admin_configで拒否する', async () => {
     const create = await runTransport(['company:create'], { input: { name: 'company.json', content: { name: 'example' } } });
     assert.equal(create.run.code, 1, `company:createが失敗していない: stdout=${create.run.stdout} stderr=${create.run.stderr}`);
     assert.equal(create.run.stdout, '');
     assert.equal(create.run.stderr, 'admin: invalid_admin_config\n');
     assert.equal(create.invocationCount, 0, 'company:createがadmin用ssh transportを起動している');
 
-    // 引数検証はDATABASE_URL確認より先で、inspectはsshへ委ねない。
+    // inspectの引数検証はSSH起動より先に行う。
     const invalidArguments = await runTransport(['inspect', 'not-a-uuid']);
     assert.equal(invalidArguments.run.code, 1);
     assert.equal(invalidArguments.run.stdout, '');
     assert.equal(invalidArguments.run.stderr, 'admin: invalid_arguments\n');
     assert.equal(invalidArguments.invocationCount, 0, 'inspectが引数検証より先にsshを起動している');
+  });
+
+  it('inspectをSSHへ委ね、会社scopeのproject一覧を含むstrictな応答だけを返す', async () => {
+    const remote = {
+      status: 'ok',
+      company: { company_id: COMPANY_ID, name: 'example', created_at: '2026-09-30T00:00:00.000Z' },
+      employees: [{ employee_id: '01930000-0000-7000-8000-000000000043', display_name: 'employee', created_at: '2026-09-30T00:00:00.000Z' }],
+      projects: [{ project_id: '01930000-0000-7000-8000-000000000044', repository_identifier: 'github.com/example/repo', created_at: '2026-09-30T00:00:00.000Z' }],
+      members: [{ project_id: '01930000-0000-7000-8000-000000000044', employee_id: '01930000-0000-7000-8000-000000000043', created_at: '2026-09-30T00:00:00.000Z' }],
+      tokens: [{ token_id: '01930000-0000-7000-8000-000000000045', employee_id: '01930000-0000-7000-8000-000000000043', created_at: '2026-09-30T00:00:00.000Z', revoked_at: null }],
+    };
+    const { run, stdin, invocationCount } = await runTransport(['inspect', COMPANY_ID], {
+      response: { stdout: `${JSON.stringify(remote)}\n` },
+    });
+    assert.equal(run.code, 0, `inspect SSHが失敗した: ${run.stderr}`);
+    assert.deepEqual(JSON.parse(run.stdout), remote);
+    assert.equal(invocationCount, 1);
+    assertComposeContract(stdin);
+    assert.ok(stdin.includes(`'inspect' '${COMPANY_ID}'`), `remote inspect invocationがない: ${stdin}`);
+    assert.ok(!run.stdout.includes('token_hash') && !run.stdout.includes('yori_'), 'token秘密を返している');
+
+    const invalid = await runTransport(['inspect', COMPANY_ID], {
+      response: { stdout: `${JSON.stringify({ ...remote, unexpected: true })}\n` },
+    });
+    assert.equal(invalid.run.code, 1);
+    assert.equal(invalid.run.stderr, 'admin: internal_error\n');
+    assert.equal(invalid.run.stdout, '');
   });
 
   it('redaction:replaceのpolicy textは0600一時fileとssh stdin scriptだけへ置き、argv・stdout・stderrへ出さない', async () => {
