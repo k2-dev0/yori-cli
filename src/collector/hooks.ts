@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
-import { lstat, readFile } from 'node:fs/promises';
+import { lstat, readFile, rm } from 'node:fs/promises';
+import path from 'node:path';
 import { COLLECTOR_CONFIG_FILE_NAME, type CollectorAgent, CollectorFailure } from './contract.js';
 import { writeFileAtomic } from './fs.js';
 import { collectorHookPath, collectorSource } from './layout.js';
@@ -11,7 +12,7 @@ export interface CollectorHookState {
   agent: CollectorAgent;
   path: string;
   text: string;
-  original: Buffer;
+  original: Buffer | null;
   json: Record<string, unknown>;
   mode: number;
 }
@@ -19,7 +20,7 @@ export interface CollectorHookState {
 export interface CollectorHookUpdate {
   path: string;
   content: string;
-  original: Buffer;
+  original: Buffer | null;
   mode: number;
 }
 
@@ -64,8 +65,18 @@ export async function detectCollectorAgents(home: string): Promise<CollectorAgen
   const agents: CollectorAgent[] = [];
   for (const agent of ['codex', 'claude_code'] as const) {
     try {
-      await lstat(collectorHookPath(home, agent));
-      agents.push(agent);
+      const hookPath = collectorHookPath(home, agent);
+      const hook = await lstat(hookPath).catch(() => null);
+      if (hook !== null) {
+        agents.push(agent);
+        continue;
+      }
+      if (agent === 'codex') {
+        const directory = await lstat(path.dirname(hookPath));
+        if (directory.isDirectory() && !directory.isSymbolicLink()) {
+          agents.push(agent);
+        }
+      }
     } catch {
       // 存在しないagent設定は対象外にする。
     }
@@ -88,7 +99,7 @@ export async function loadCollectorHook(home: string, agent: CollectorAgent): Pr
   const original = await readFile(filePath);
   let json: unknown;
   try {
-    json = JSON.parse(original.toString('utf8'));
+    json = original.length === 0 ? {} : JSON.parse(original.toString('utf8'));
   } catch {
     throw new CollectorFailure('collector_hook_invalid');
   }
@@ -161,9 +172,19 @@ export async function planCollectorHooks(
 ): Promise<CollectorHookUpdate[]> {
   const updates: CollectorHookUpdate[] = [];
   for (const agent of agents) {
-    const state = await loadCollectorHook(home, agent);
+    let state = await loadCollectorHook(home, agent);
     if (state === null) {
-      continue;
+      if (action === 'uninstall') {
+        continue;
+      }
+      state = {
+        agent,
+        path: collectorHookPath(home, agent),
+        text: '',
+        original: null,
+        json: {},
+        mode: 0o600,
+      };
     }
     const content = renderCollectorHook(state, launcherPath, configPath, action);
     if (content !== state.text) {
@@ -178,7 +199,10 @@ export async function planCollectorHooks(
 export async function commitCollectorHooks(updates: readonly CollectorHookUpdate[]): Promise<void> {
   for (const update of updates) {
     const current = await readFile(update.path).catch(() => null);
-    if (current === null || sha256(current) !== sha256(update.original)) {
+    if (
+      (update.original === null && current !== null) ||
+      (update.original !== null && (current === null || sha256(current) !== sha256(update.original)))
+    ) {
       throw new CollectorFailure('collector_hook_conflict');
     }
   }
@@ -202,7 +226,11 @@ async function restoreHookFiles(updates: readonly CollectorHookUpdate[]): Promis
   let failed = false;
   for (const update of [...updates].reverse()) {
     try {
-      await writeFileAtomic(update.path, update.original, update.mode);
+      if (update.original === null) {
+        await rm(update.path, { force: true });
+      } else {
+        await writeFileAtomic(update.path, update.original, update.mode);
+      }
     } catch {
       failed = true;
     }
