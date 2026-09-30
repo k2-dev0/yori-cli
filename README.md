@@ -184,9 +184,11 @@ DATABASE_URL='<database-url>' npm run --silent yori -- <command> [argument]
 ### `token:issue`
 
 ```text
-入力:     { "company_id": "<uuid>", "employee_id": "<uuid>" }
-成功出力: { "status": "created", "token_id": "<uuid>", "employee_id": "<uuid>", "token": "yori_<secret>" }
+入力:     { "company_id": "<uuid>", "employee_id": "<uuid>", "scope": "employee|company_admin" }
+成功出力: { "status": "created", "token_id": "<uuid>", "employee_id": "<uuid>", "scope": "employee|company_admin", "token": "yori_<secret>" }
 ```
+
+`scope`は省略時`employee`。最初の`company_admin` tokenだけは、DBへ接続できる管理環境でこの形式を使って発行する。
 
 ### `token:revoke`
 
