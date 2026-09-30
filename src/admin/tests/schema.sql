@@ -13,6 +13,10 @@ INSERT INTO schema_migrations (version)
 VALUES ('0001_init.sql')
 ON CONFLICT (version) DO NOTHING;
 
+INSERT INTO schema_migrations (version)
+VALUES ('0013_auth_token_scope.sql')
+ON CONFLICT (version) DO NOTHING;
+
 CREATE TABLE IF NOT EXISTS companies (
   id uuid PRIMARY KEY,
   name text NOT NULL,
@@ -50,9 +54,20 @@ CREATE TABLE IF NOT EXISTS auth_tokens (
   company_id uuid NOT NULL REFERENCES companies (id) ON DELETE CASCADE,
   employee_id uuid NOT NULL REFERENCES employees (id) ON DELETE CASCADE,
   token_hash bytea NOT NULL UNIQUE,
+  scope text NOT NULL DEFAULT 'employee' CHECK (scope IN ('employee', 'company_admin')),
   created_at timestamptz NOT NULL DEFAULT now(),
   revoked_at timestamptz
 );
+
+ALTER TABLE auth_tokens ADD COLUMN IF NOT EXISTS scope text NOT NULL DEFAULT 'employee';
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'auth_tokens_scope_check') THEN
+    ALTER TABLE auth_tokens
+      ADD CONSTRAINT auth_tokens_scope_check CHECK (scope IN ('employee', 'company_admin'));
+  END IF;
+END $$;
 
 -- ここから yori migration 0010_custom_redaction.sql (business policy schema) 相当。
 -- yori-cliは0010のtableへfield/termを登録するため、test fixtureも同じ制約を再現する。
