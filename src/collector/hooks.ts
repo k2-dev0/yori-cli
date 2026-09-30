@@ -6,7 +6,7 @@ import { writeFileAtomic } from './fs.js';
 import { collectorHookPath, collectorSource } from './layout.js';
 
 type CollectorHookAction = 'install' | 'uninstall';
-type CollectorHookKind = 'notify' | 'collect';
+type CollectorHookKind = 'notify' | 'notify-late' | 'collect';
 
 export interface CollectorHookState {
   agent: CollectorAgent;
@@ -26,6 +26,7 @@ export interface CollectorHookUpdate {
 
 const HOOK_SPECS: readonly { section: string; kind: CollectorHookKind }[] = [
   { section: 'UserPromptSubmit', kind: 'notify' },
+  { section: 'UserPromptSubmit', kind: 'notify-late' },
   { section: 'Stop', kind: 'collect' },
 ];
 
@@ -125,6 +126,7 @@ export function renderCollectorHook(
 ): string {
   const json = JSON.parse(JSON.stringify(state.json)) as Record<string, unknown>;
   const hooks = isPlainObject(json.hooks) ? json.hooks : (json.hooks = {});
+  const ownedCommands = new Set(HOOK_SPECS.map((spec) => collectorHookCommand(state.agent, spec.kind, launcherPath, configPath)));
   for (const spec of HOOK_SPECS) {
     const current = hooks[spec.section];
     if (!Array.isArray(current)) {
@@ -144,6 +146,9 @@ export function renderCollectorHook(
           owned = true;
           return;
         }
+        if (ownedCommands.has(command)) {
+          return;
+        }
         const referencesCollector = command.includes(COLLECTOR_CONFIG_FILE_NAME) || command.includes(launcherPath);
         if (referencesCollector && action === 'install') {
           throw new CollectorFailure('collector_hook_conflict');
@@ -154,7 +159,7 @@ export function renderCollectorHook(
       }
     }
     if (action === 'install') {
-      const hook = spec.kind === 'notify' ? { type: 'command', command: expected, async: true } : { type: 'command', command: expected };
+      const hook = spec.kind === 'notify-late' ? { type: 'command', command: expected, async: true } : { type: 'command', command: expected };
       kept.push({ hooks: [hook] });
     }
     hooks[spec.section] = kept;
