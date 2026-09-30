@@ -31,12 +31,16 @@ function runBuild(yoriRepository: string): BuildResult {
   return { status: result.status, stdout: result.stdout, stderr: result.stderr };
 }
 
-async function writeArtifact(yoriRepository: string, options: { version: string; content: string; checksum?: string }): Promise<void> {
+async function writeArtifact(
+  yoriRepository: string,
+  options: { version: string; content: string; checksum?: string; gitSha?: string },
+): Promise<void> {
   const outDir = path.join(yoriRepository, 'dist', 'collector');
   await mkdir(outDir, { recursive: true });
   const manifest = {
     version: options.version,
     file: 'yori-collector.mjs',
+    git_sha: options.gitSha ?? '1111111111111111111111111111111111111111',
     checksum: options.checksum ?? createHash('sha256').update(options.content).digest('hex'),
   };
   await writeFile(path.join(outDir, 'yori-collector.mjs'), options.content, 'utf8');
@@ -67,7 +71,8 @@ describe('collector build copy', () => {
     try {
       await withDistBackup(async () => {
         const content = 'console.log("build-fixture-v1");\n';
-        await writeArtifact(yoriRepository, { version: '9.9.9-build1', content });
+        const packageJson = JSON.parse(await readFile(path.join(REPO_ROOT, 'package.json'), 'utf8')) as { version: string };
+        await writeArtifact(yoriRepository, { version: packageJson.version, content });
         const first = runBuild(yoriRepository);
         assert.equal(first.status, 0, `buildが失敗した: ${first.stderr}`);
         assert.ok(existsSync(BUNDLE_PATH), `collector bundleがcopyされていない: ${BUNDLE_PATH}`);
@@ -78,6 +83,8 @@ describe('collector build copy', () => {
         assert.equal(manifest.file, 'yori-collector.mjs');
         assert.equal(typeof manifest.version, 'string');
         assert.ok((manifest.version as string).length > 0);
+        assert.equal(manifest.version, packageJson.version);
+        assert.match(String(manifest.git_sha), /^[0-9a-f]{40}$/);
 
         // npm artifact（pack）へcollector bundleとmanifestを同梱する。
         const pack = spawnSync('npm', ['pack', '--dry-run', '--json', '--ignore-scripts'], { cwd: REPO_ROOT, encoding: 'utf8' });
@@ -92,7 +99,7 @@ describe('collector build copy', () => {
         const before = await readFile(BUNDLE_PATH);
         const beforeManifest = await readFile(MANIFEST_PATH);
         await writeArtifact(yoriRepository, {
-          version: '9.9.9-build2',
+          version: packageJson.version,
           content: 'console.log("build-fixture-v2");\n',
           checksum: '0'.repeat(64),
         });
@@ -100,6 +107,24 @@ describe('collector build copy', () => {
         assert.notEqual(second.status, 0, 'checksum不一致のartifactでbuildが成功した');
         assert.deepEqual(await readFile(BUNDLE_PATH), before, 'checksum不一致で既存copyを変更している');
         assert.deepEqual(await readFile(MANIFEST_PATH), beforeManifest, 'checksum不一致で既存manifestを変更している');
+      });
+    } finally {
+      await rm(yoriRepository, { recursive: true, force: true });
+    }
+  });
+
+  it('collector versionがyori-cli package versionと違う、またはgit_shaが不正ならcopyしない', async () => {
+    const yoriRepository = await mkdtemp(path.join(tmpdir(), 'yori-repository-version-fixture-'));
+    try {
+      await withDistBackup(async () => {
+        for (const artifact of [
+          { version: '0.0.0', content: 'console.log("bad-version");\n' },
+          { version: '0.1.2', content: 'console.log("bad-sha");\n', gitSha: 'not-a-sha' },
+        ]) {
+          await writeArtifact(yoriRepository, artifact);
+          const result = runBuild(yoriRepository);
+          assert.notEqual(result.status, 0, `不正metadataを成功扱いした: ${JSON.stringify(artifact)}`);
+        }
       });
     } finally {
       await rm(yoriRepository, { recursive: true, force: true });
@@ -122,7 +147,8 @@ describe('collector build copy', () => {
     const yoriRepository = await mkdtemp(path.join(tmpdir(), 'yori-repository-rollback-'));
     try {
       await withDistBackup(async () => {
-        await writeArtifact(yoriRepository, { version: '9.9.9-rollback1', content: 'console.log("rollback-v1");\n' });
+        const packageJson = JSON.parse(await readFile(path.join(REPO_ROOT, 'package.json'), 'utf8')) as { version: string };
+        await writeArtifact(yoriRepository, { version: packageJson.version, content: 'console.log("rollback-v1");\n' });
         assert.equal(runBuild(yoriRepository).status, 0, 'rollback testの事前buildが失敗した');
         const before = await readFile(BUNDLE_PATH);
         // manifestのtargetをdirectoryへ置換し、2つ目のrenameだけを失敗させる。
