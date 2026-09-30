@@ -133,6 +133,7 @@ member:add "akiyama"
 ```
 
 company admin tokenで`POST /v1/employees`を呼び、認証tokenの会社へ社員を作成する。会社IDは引数やrequest bodyから受けない。社員tokenは自動発行せず、続けて`token:issue <employee-id> --scope employee`を実行する。会社内の全社員が会社projectを共通利用するため、project所属の追加は不要。
+`employee:add <display-name>`も互換aliasとして同じAPIを呼ぶ。公開手順では`member:add`を使用する。
 
 ### `member:add` / `member:remove <file.json>`（旧DB管理用）
 
