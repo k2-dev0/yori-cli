@@ -16,6 +16,12 @@ const collectorSetupResponseSchema = z.strictObject({
     detector_version: z.literal('initial-v1'),
   }),
 });
+const collectorErrorResponseSchema = z.strictObject({
+  error: z.strictObject({
+    code: z.enum(['invalid_request', 'unauthorized', 'not_found', 'internal_error']),
+  }),
+});
+const COMPATIBILITY_REPOSITORY = 'github.com/yori/collector-compatibility-probe';
 
 export interface CollectorSetupResult {
   project_id: string;
@@ -71,6 +77,23 @@ function parseConfigApiUrl(text: string): string {
 
 // Bearerでcanonical repositoryだけを送る。応答body・raw error・token・rulesは失敗出力へ出さない。
 export async function requestCollectorSetup(apiUrl: string, token: string, repository: string): Promise<CollectorSetupResult> {
+  let compatibility: Response;
+  try {
+    compatibility = await fetch(`${apiUrl}/v1/collector/setup`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ repository: COMPATIBILITY_REPOSITORY }),
+      signal: AbortSignal.timeout(10_000),
+    });
+  } catch {
+    throw new CollectorFailure('collector_internal_error');
+  }
+  const compatibilityBody: unknown = await compatibility.json().catch(() => null);
+  const compatibilityError = collectorErrorResponseSchema.safeParse(compatibilityBody);
+  if (compatibility.status !== 401 || !compatibilityError.success || compatibilityError.data.error.code !== 'unauthorized') {
+    throw new CollectorFailure('collector_server_incompatible');
+  }
+
   let response: Response;
   try {
     response = await fetch(`${apiUrl}/v1/collector/setup`, {
@@ -99,14 +122,23 @@ export async function requestCollectorSetup(apiUrl: string, token: string, repos
       policy_version: parsed.data.redaction_policy.version,
     };
   }
-  if (response.status === 400) {
+  const body: unknown = await response.json().catch(() => null);
+  const parsed = collectorErrorResponseSchema.safeParse(body);
+  if (!parsed.success) {
+    throw new CollectorFailure('collector_server_incompatible');
+  }
+  const code = parsed.data.error.code;
+  if (response.status === 400 && code === 'invalid_request') {
     throw new CollectorFailure('collector_invalid_request');
   }
-  if (response.status === 401) {
+  if (response.status === 401 && code === 'unauthorized') {
     throw new CollectorFailure('collector_unauthorized');
   }
-  if (response.status === 404) {
+  if (response.status === 404 && code === 'not_found') {
     throw new CollectorFailure('project_not_found');
   }
-  throw new CollectorFailure('collector_internal_error');
+  if (response.status === 500 && code === 'internal_error') {
+    throw new CollectorFailure('collector_internal_error');
+  }
+  throw new CollectorFailure('collector_server_incompatible');
 }
