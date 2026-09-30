@@ -24,7 +24,7 @@ npx --yes --package=yori-cli@<reviewed-version> yori inspect <company-uuid>
 
 `project:add`もDBへ直接接続せず、KeychainのYori tokenでHTTPS APIを呼ぶ。cwdのcanonical repositoryをtokenの会社へ登録し、新規は`done`、登録済みは`already`として終了コード0を返す。同じ会社の社員は登録済みprojectを共通利用する。
 
-`me`は通常tokenで本人・会社・現在token metadata・会社projectを取得する。`company:show`、`employee:add <display-name>`、`token:issue <employee-id> --scope employee|company_admin`、`token:revoke <token-id>`はcompany admin tokenをKeychain service `online.yori.admin`へ通常tokenと分離して保存し、HTTPS APIを呼ぶ。会社・token一覧はmetadataだけを返し、生tokenは発行成功時に一度だけstdoutへ出す。token hashは返さない。
+`me`は通常tokenで本人・会社・現在token metadata・会社projectを取得する。`company:show`、`employee:add <display-name>`、`employee:rename <employee-id> <new-display-name>`、`token:issue <employee-id> --scope employee|company_admin`、`token:revoke <token-id>`はcompany admin tokenをKeychain service `online.yori.admin`へ通常tokenと分離して保存し、HTTPS APIを呼ぶ。会社・token一覧はmetadataだけを返し、生tokenは発行成功時に一度だけstdoutへ出す。token hashは返さない。
 
 ### リポジトリ内（開発時）
 
@@ -137,6 +137,18 @@ employee:add "akiyama" --issue-token
 ```
 
 company admin tokenで`POST /v1/employees`を呼び、認証tokenの会社へ社員を作成する。会社IDは引数やrequest bodyから受けない。`--issue-token`指定時だけ、作成したemployee IDへ既存のtoken発行APIをemployee scopeで続けて呼び、生tokenを成功出力へ一度だけ含める。token発行だけが失敗した場合は社員が残るため、`company:show`でemployee IDを確認して`token:issue <employee-id> --scope employee`を再実行する。会社内の全社員が会社projectを共通利用するため、project所属の追加は不要。
+
+### `employee:rename <employee-id> <new-display-name>`
+
+```text
+employee:rename <employee-id> "Alicia"
+```
+
+```json
+{"status":"done","employee_id":"<uuid>","display_name":"Alicia"}
+```
+
+company admin tokenで`PATCH /v1/employees/:employee_id`を呼び、認証tokenと同じ会社の社員の表示名だけを変更する。既存token・会話履歴・project accessは変更しない。
 
 ### `member:add` / `member:remove <file.json>`
 
