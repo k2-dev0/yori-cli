@@ -63,6 +63,12 @@ export interface ApiResponse {
   networkError?: boolean;
 }
 
+export const DEFAULT_COLLECTOR_GIT_SHA = '1111111111111111111111111111111111111111';
+export const DEFAULT_COMPATIBILITY_RESPONSE: ApiResponse = {
+  status: 401,
+  body: { error: { code: 'unauthorized' } },
+};
+
 export interface CollectorRun {
   code: number;
   stdout: string;
@@ -228,19 +234,28 @@ export function collectorVersionDir(fixture: CollectorFixture, version: string):
 // test用artifact fixtureを作る。checksumを省略すると本文から計算し、指定すると不一致を作れる。
 export async function writeCollectorArtifact(
   fixture: CollectorFixture,
-  options: { version: string; content: string; checksum?: string },
+  options: { version: string; content: string; checksum?: string; gitSha?: string },
 ): Promise<void> {
   const manifest = {
     version: options.version,
     file: 'yori-collector.mjs',
+    git_sha: options.gitSha ?? DEFAULT_COLLECTOR_GIT_SHA,
     checksum: options.checksum ?? sha256Hex(options.content),
   };
   await writeFile(path.join(fixture.artifactDir, 'yori-collector.mjs'), options.content, 'utf8');
   await writeFile(path.join(fixture.artifactDir, 'collector-manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
 }
 
-export async function writeApiSpec(fixture: CollectorFixture, responses: ApiResponse[]): Promise<void> {
-  await writeFile(fixture.apiSpecPath, JSON.stringify(responses), 'utf8');
+export async function writeApiSpec(
+  fixture: CollectorFixture,
+  responses: ApiResponse[],
+  options: { includeCompatibilityProbe?: boolean } = {},
+): Promise<void> {
+  const queued =
+    options.includeCompatibilityProbe === false
+      ? responses
+      : responses.flatMap((response) => [DEFAULT_COMPATIBILITY_RESPONSE, response]);
+  await writeFile(fixture.apiSpecPath, JSON.stringify(queued), 'utf8');
 }
 
 // fetch mockが記録したsetup request。tokenはtest用fixtureの値だけを扱う。
@@ -469,6 +484,7 @@ export async function installCollectorWithoutSetup(fixture: CollectorFixture, co
   await writeCollectorInstallState(collectorInstallStatePath(fixture.home), {
     installer_version: packageJson.version,
     collector_version: artifact.version,
+    git_sha: artifact.gitSha,
     checksum: artifact.checksum,
     policy_version: null,
   });
