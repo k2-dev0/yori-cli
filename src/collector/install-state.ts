@@ -7,11 +7,12 @@ import { writeFileAtomic } from './fs.js';
 export interface CollectorInstallState {
   installer_version: string;
   collector_version: string;
+  git_sha: string | null;
   checksum: string;
   policy_version: number | null;
 }
 
-// install.jsonはinstaller/collector version・checksum・setup policy versionだけを持つ。
+// install.jsonはinstaller/collector version・Git SHA・checksum・setup policy versionだけを持つ。
 // token・rules・pathは保存しない。
 export async function readCollectorInstallState(filePath: string): Promise<CollectorInstallState | null> {
   const text = await readFile(filePath, 'utf8').catch(() => null);
@@ -21,17 +22,18 @@ export async function readCollectorInstallState(filePath: string): Promise<Colle
   try {
     const parsed: unknown = JSON.parse(text);
     if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
-      const { installer_version, collector_version, checksum, policy_version } = parsed as Record<string, unknown>;
+      const { installer_version, collector_version, git_sha, checksum, policy_version } = parsed as Record<string, unknown>;
       if (
         typeof installer_version === 'string' &&
         installer_version.length > 0 &&
         typeof collector_version === 'string' &&
         collector_version.length > 0 &&
+        (git_sha === undefined || git_sha === null || (typeof git_sha === 'string' && /^[0-9a-f]{40}$/.test(git_sha))) &&
         typeof checksum === 'string' &&
         checksum.length > 0 &&
         (policy_version === null || typeof policy_version === 'number')
       ) {
-        return { installer_version, collector_version, checksum, policy_version };
+        return { installer_version, collector_version, git_sha: typeof git_sha === 'string' ? git_sha : null, checksum, policy_version };
       }
     }
   } catch {
