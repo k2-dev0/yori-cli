@@ -89,7 +89,7 @@ DATABASE_URL='<database-url>' npm run --silent yori -- <command> [argument]
 | `employee:create <file.json>` | 指定した会社に社員を登録する |
 | `project:create <file.json>` | 指定した会社に案件を登録する |
 | `project:add` | cwdのrepositoryを社員tokenの会社へ登録する（JSON・`DATABASE_URL`不要） |
-| `employee:add <display-name>` | company admin tokenで会社へ社員を追加する（JSON・`DATABASE_URL`不要） |
+| `employee:add <display-name> [--issue-token]` | company admin tokenで会社へ社員を追加し、option指定時はemployee tokenも続けて発行する（JSON・`DATABASE_URL`不要） |
 | `member:add <file.json>` | 旧DB管理用。案件に社員を追加する |
 | `member:remove <file.json>` | 案件から社員を外す |
 | `token:issue <file.json>` | 指定した社員の認証トークンを発行する |
@@ -173,9 +173,12 @@ DATABASE_URL='<database-url>' npm run --silent yori -- <command> [argument]
 ```text
 入力:     employee:add "akiyama"
 成功出力: { "status": "done", "employee_id": "<uuid>", "display_name": "akiyama", "created_at": "<timestamp>" }
+
+入力:     employee:add "akiyama" --issue-token
+成功出力: { "status": "done", "employee_id": "<uuid>", "display_name": "akiyama", "token_id": "<uuid>", "scope": "employee", "token": "yori_<secret>" }
 ```
 
-作成された社員のtokenは自動発行しない。続けて`token:issue <employee-id> --scope employee`を実行する。同じ会社のprojectは全社員が共通利用するため、projectごとの所属追加は不要。
+`--issue-token`なしではtokenを発行しない。指定時は社員作成の成功後に既存token APIをemployee scopeで呼び、生tokenを成功出力へ一度だけ含める。token発行だけが失敗した場合、社員は作成済みなので`company:show`でemployee IDを確認し、`token:issue <employee-id> --scope employee`を再実行する。同じ会社のprojectは全社員が共通利用するため、projectごとの所属追加は不要。
 
 ### `member:add <file.json>`
 
