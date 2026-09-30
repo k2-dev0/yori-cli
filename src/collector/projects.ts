@@ -11,11 +11,6 @@ const projectOutputSchema = z.strictObject({
   project_id: z.uuid(),
   repository: z.string().min(1),
 });
-const memberOutputSchema = z.strictObject({
-  status: z.enum(['done', 'already']),
-  project_id: z.uuid(),
-  employee_id: z.uuid(),
-});
 const projectErrorSchema = z.strictObject({
   error: z.strictObject({
     code: z.enum(['invalid_request', 'unauthorized', 'forbidden', 'not_found', 'repository_conflict', 'internal_error']),
@@ -23,7 +18,6 @@ const projectErrorSchema = z.strictObject({
 });
 
 export type ProjectRegistrationOutput = z.infer<typeof projectOutputSchema>;
-export type ProjectMemberOutput = z.infer<typeof memberOutputSchema>;
 
 function mapApiFailure(status: number, body: unknown): never {
   const parsed = projectErrorSchema.safeParse(body);
@@ -75,33 +69,6 @@ async function requestProjectRegistration(apiUrl: string, token: string, reposit
   return mapApiFailure(response.status, body);
 }
 
-async function requestProjectMember(
-  apiUrl: string,
-  token: string,
-  projectId: string,
-  employeeId: string,
-): Promise<ProjectMemberOutput> {
-  let response: Response;
-  try {
-    response = await fetch(`${apiUrl}/v1/projects/${projectId}/members/${employeeId}`, {
-      method: 'PUT',
-      headers: { authorization: `Bearer ${token}` },
-      signal: AbortSignal.timeout(10_000),
-    });
-  } catch {
-    throw new CollectorFailure('collector_internal_error');
-  }
-  const body: unknown = await response.json().catch(() => null);
-  if (response.status === 200) {
-    const parsed = memberOutputSchema.safeParse(body);
-    if (!parsed.success || parsed.data.project_id !== projectId || parsed.data.employee_id !== employeeId) {
-      throw new CollectorFailure('collector_internal_error');
-    }
-    return parsed.data;
-  }
-  return mapApiFailure(response.status, body);
-}
-
 async function withProjectToken<T>(
   env: NodeJS.ProcessEnv,
   run: (apiUrl: string, token: string) => Promise<T>,
@@ -129,26 +96,6 @@ export async function registerCurrentProject(
   try {
     const repository = resolveRepositoryFromCwd(env, cwd);
     return { ok: true, value: await withProjectToken(env, (apiUrl, token) => requestProjectRegistration(apiUrl, token, repository)) };
-  } catch (error) {
-    return error instanceof CollectorFailure
-      ? { ok: false, code: error.code }
-      : { ok: false, code: 'collector_internal_error' };
-  }
-}
-
-export async function addProjectMemberViaApi(
-  env: NodeJS.ProcessEnv,
-  projectId: string,
-  employeeId: string,
-): Promise<AdminResult<ProjectMemberOutput>> {
-  if (!isSupportedCollectorPlatform(process.platform)) {
-    return { ok: false, code: 'unsupported_platform' };
-  }
-  try {
-    return {
-      ok: true,
-      value: await withProjectToken(env, (apiUrl, token) => requestProjectMember(apiUrl, token, projectId, employeeId)),
-    };
   } catch (error) {
     return error instanceof CollectorFailure
       ? { ok: false, code: error.code }
