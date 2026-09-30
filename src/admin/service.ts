@@ -25,6 +25,7 @@ import {
   type RepositoryRemoveOutput,
   type TokenIssueInput,
   type TokenIssueOutput,
+  type TokenScope,
   type TokenRevokeInput,
   type TokenRevokeOutput,
 } from './contract.js';
@@ -41,6 +42,7 @@ const MEMBER_CONSTRAINT = 'project_members_pkey';
 const TOKEN_HASH_CONSTRAINT = 'auth_tokens_token_hash_key';
 const REQUIRED_MIGRATION = '0001_init.sql';
 const REDACTION_MIGRATION = '0010_custom_redaction.sql';
+const AUTH_TOKEN_SCOPE_MIGRATION = '0013_auth_token_scope.sql';
 const REDACTION_DETECTOR_VERSION = 'initial-v1';
 
 // PostgreSQLの一意制約違反だけを対象にする。他のDB障害を再生成や成功扱いで隠さない。
@@ -111,17 +113,19 @@ async function insertAuthToken(
   companyId: string,
   employeeId: string,
   generateToken: () => string,
+  scope: TokenScope = 'employee',
 ): Promise<{ tokenId: string; token: string } | null> {
   for (let attempt = 0; attempt < TOKEN_HASH_RETRY_LIMIT; attempt += 1) {
     const tokenId = uuidv7();
     const token = generateToken();
     await client.query('SAVEPOINT admin_auth_token_insert');
     try {
-      await client.query('INSERT INTO auth_tokens (id, company_id, employee_id, token_hash) VALUES ($1, $2, $3, $4)', [
+      await client.query('INSERT INTO auth_tokens (id, company_id, employee_id, token_hash, scope) VALUES ($1, $2, $3, $4, $5)', [
         tokenId,
         companyId,
         employeeId,
         hashAuthToken(token),
+        scope,
       ]);
       await client.query('RELEASE SAVEPOINT admin_auth_token_insert');
       return { tokenId, token };
@@ -346,15 +350,15 @@ export async function issueToken(pool: Pool, input: TokenIssueInput, options: To
     if (employeeRow.company_id !== input.company_id) {
       return { ok: false, code: 'company_scope_mismatch' };
     }
-    const issued = await insertAuthToken(client, input.company_id, input.employee_id, generateToken);
+    const issued = await insertAuthToken(client, input.company_id, input.employee_id, generateToken, input.scope);
     if (issued === null) {
       return { ok: false, code: 'internal_error' };
     }
     return {
       ok: true,
-      value: { status: 'created', token_id: issued.tokenId, employee_id: input.employee_id, token: issued.token },
+      value: { status: 'created', token_id: issued.tokenId, employee_id: input.employee_id, scope: input.scope, token: issued.token },
     };
-  });
+  }, [REQUIRED_MIGRATION, AUTH_TOKEN_SCOPE_MIGRATION]);
 }
 
 export async function revokeToken(pool: Pool, input: TokenRevokeInput): Promise<AdminResult<TokenRevokeOutput>> {
