@@ -33,6 +33,7 @@ const API_MOCK_URL = new URL('./fixtures/collector-api-mock.mjs', import.meta.ur
 
 export const DEFAULT_API_URL = 'https://yori-pilot.online';
 export const KEYCHAIN_SERVICE = 'online.yori.collector';
+export const ADMIN_KEYCHAIN_SERVICE = 'online.yori.admin';
 export const SECRET_KEYCHAIN_SERVICE = 'online.yori.collector.secret';
 export const CONFIG_FILE_NAME = '.yori-collector.json';
 export const SECRETS_INDEX_FILE_NAME = 'secrets.json';
@@ -54,6 +55,7 @@ export interface CollectorFixture {
   apiLogPath: string;
   securityLogPath: string;
   keychainPath: string;
+  adminKeychainPath: string;
   secretsDir: string;
 }
 
@@ -107,6 +109,32 @@ for arg in "$@"; do
 done
 
 case "$service" in
+  online.yori.admin)
+    case "$1" in
+      find-generic-password)
+        if [ -f "\${YORI_TEST_ADMIN_KEYCHAIN_FILE:?}" ]; then
+          cat "\${YORI_TEST_ADMIN_KEYCHAIN_FILE:?}"
+        else
+          printf '%s\\n' 'security: SecKeychainSearchCopyNext: The specified item could not be found in the keychain.' >&2
+          exit 44
+        fi
+        ;;
+      add-generic-password)
+        IFS= read -r token || exit 1
+        printf '%s' "$token" > "\${YORI_TEST_ADMIN_KEYCHAIN_FILE:?}"
+        ;;
+      delete-generic-password)
+        if [ -f "\${YORI_TEST_ADMIN_KEYCHAIN_FILE:?}" ]; then
+          rm -f "\${YORI_TEST_ADMIN_KEYCHAIN_FILE:?}"
+        else
+          exit 44
+        fi
+        ;;
+      *)
+        exit 1
+        ;;
+    esac
+    ;;
   online.yori.collector.secret)
     secret_dir="\${YORI_TEST_SECRETS_DIR:?}"
     target="$secret_dir/$account"
@@ -194,6 +222,7 @@ export async function createCollectorFixture(): Promise<CollectorFixture> {
     apiLogPath: path.join(root, 'api-log.jsonl'),
     securityLogPath: path.join(root, 'security-log.txt'),
     keychainPath: path.join(root, 'keychain.txt'),
+    adminKeychainPath: path.join(root, 'admin-keychain.txt'),
     secretsDir,
   };
 }
@@ -280,6 +309,10 @@ export async function keychainToken(fixture: CollectorFixture): Promise<string |
   return readFile(fixture.keychainPath, 'utf8').catch(() => null);
 }
 
+export async function adminKeychainToken(fixture: CollectorFixture): Promise<string | null> {
+  return readFile(fixture.adminKeychainPath, 'utf8').catch(() => null);
+}
+
 export interface RootCliOptions {
   cwd?: string;
   env?: Record<string, string | undefined>;
@@ -301,6 +334,7 @@ export async function runRootCli(fixture: CollectorFixture, args: string[], opti
     YORI_TEST_GIT_ORIGIN: fixture.gitOrigin,
     YORI_TEST_SECURITY_LOG: fixture.securityLogPath,
     YORI_TEST_KEYCHAIN_FILE: fixture.keychainPath,
+    YORI_TEST_ADMIN_KEYCHAIN_FILE: fixture.adminKeychainPath,
     YORI_TEST_SECRETS_DIR: fixture.secretsDir,
     YORI_TEST_API_SPEC: fixture.apiSpecPath,
     YORI_TEST_API_LOG: fixture.apiLogPath,
