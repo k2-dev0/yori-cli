@@ -1,0 +1,131 @@
+import assert from 'node:assert/strict';
+import { writeFile } from 'node:fs/promises';
+import { describe, it } from 'node:test';
+import {
+  DEFAULT_API_URL,
+  DEFAULT_TOKEN,
+  parseCollectorSuccess,
+  readApiRequests,
+  runRootCli,
+  withCollectorFixture,
+  writeApiSpec,
+} from './collector-support.js';
+
+const COMPANY_ID = '01930000-0000-7000-8000-000000000081';
+const EMPLOYEE_ID = '01930000-0000-7000-8000-000000000082';
+const TOKEN_ID = '01930000-0000-7000-8000-000000000083';
+const PROJECT_ID = '01930000-0000-7000-8000-000000000084';
+const CREATED_AT = '2026-09-30T00:00:00.000Z';
+
+const meResponse = {
+  company: { company_id: COMPANY_ID, name: 'example' },
+  employee: { employee_id: EMPLOYEE_ID, display_name: 'Alice', created_at: CREATED_AT },
+  token: { token_id: TOKEN_ID, scope: 'employee', created_at: CREATED_AT, revoked_at: null },
+  projects: [{ project_id: PROJECT_ID, repository: 'github.com/example/repo', created_at: CREATED_AT }],
+};
+
+const companyResponse = {
+  company: { company_id: COMPANY_ID, name: 'example' },
+  employees: [{ employee_id: EMPLOYEE_ID, display_name: 'Alice', created_at: CREATED_AT }],
+  projects: [{ project_id: PROJECT_ID, repository: 'github.com/example/repo', created_at: CREATED_AT }],
+  tokens: [{ token_id: TOKEN_ID, employee_id: EMPLOYEE_ID, scope: 'company_admin', created_at: CREATED_AT, revoked_at: null }],
+};
+
+describe('社員・会社・token API CLI', () => {
+  it('meとcompany:showはKeychain tokenでstrict metadataを取得する', async () => {
+    for (const command of [
+      { args: ['me'], path: '/v1/me', body: meResponse },
+      { args: ['company:show'], path: '/v1/company', body: companyResponse },
+    ]) {
+      await withCollectorFixture(async (fixture) => {
+        await writeFile(fixture.keychainPath, DEFAULT_TOKEN, 'utf8');
+        await writeApiSpec(fixture, [{ status: 200, body: command.body }], { includeCompatibilityProbe: false });
+        assert.deepEqual(parseCollectorSuccess(await runRootCli(fixture, command.args)), command.body);
+        const requests = await readApiRequests(fixture);
+        assert.equal(requests.length, 1);
+        assert.equal(requests[0].url, `${DEFAULT_API_URL}${command.path}`);
+        assert.equal(requests[0].method, 'GET');
+        assert.equal(requests[0].authorization, `Bearer ${DEFAULT_TOKEN}`);
+        assert.equal(requests[0].body, null);
+      });
+    }
+  });
+
+  it('token:issueは社員UUIDとscopeをAPIへ送り、生tokenを一度だけ返す', async () => {
+    for (const scope of ['employee', 'company_admin'] as const) {
+      await withCollectorFixture(async (fixture) => {
+        await writeFile(fixture.keychainPath, DEFAULT_TOKEN, 'utf8');
+        const issued = { status: 'done', token_id: TOKEN_ID, employee_id: EMPLOYEE_ID, scope, token: 'yori_synthetic-issued-token' };
+        await writeApiSpec(fixture, [{ status: 201, body: issued }], { includeCompatibilityProbe: false });
+        const output = parseCollectorSuccess(
+          await runRootCli(fixture, ['token:issue', EMPLOYEE_ID.toUpperCase(), '--scope', scope]),
+        );
+        assert.deepEqual(output, issued);
+        const requests = await readApiRequests(fixture);
+        assert.equal(requests[0].url, `${DEFAULT_API_URL}/v1/employees/${EMPLOYEE_ID}/tokens`);
+        assert.equal(requests[0].method, 'POST');
+        assert.equal(requests[0].authorization, `Bearer ${DEFAULT_TOKEN}`);
+        assert.deepEqual(JSON.parse(String(requests[0].body)), { scope });
+      });
+    }
+  });
+
+  it('token:revokeのUUID引数はAPI DELETEへ送り、done/alreadyを返す', async () => {
+    for (const status of ['done', 'already'] as const) {
+      await withCollectorFixture(async (fixture) => {
+        await writeFile(fixture.keychainPath, DEFAULT_TOKEN, 'utf8');
+        await writeApiSpec(fixture, [{ status: 200, body: { status, token_id: TOKEN_ID } }], { includeCompatibilityProbe: false });
+        assert.deepEqual(parseCollectorSuccess(await runRootCli(fixture, ['token:revoke', TOKEN_ID.toUpperCase()])), {
+          status,
+          token_id: TOKEN_ID,
+        });
+        const requests = await readApiRequests(fixture);
+        assert.equal(requests[0].url, `${DEFAULT_API_URL}/v1/tokens/${TOKEN_ID}`);
+        assert.equal(requests[0].method, 'DELETE');
+        assert.equal(requests[0].authorization, `Bearer ${DEFAULT_TOKEN}`);
+        assert.equal(requests[0].body, null);
+      });
+    }
+  });
+
+  it('新形式の引数違反はKeychain・APIより先にinvalid_argumentsで拒否する', async () => {
+    for (const args of [
+      ['me', 'extra'],
+      ['company:show', 'extra'],
+      ['token:issue', 'not-a-uuid', '--scope', 'employee'],
+      ['token:issue', EMPLOYEE_ID, '--scope', 'owner'],
+      ['token:issue', EMPLOYEE_ID, 'employee'],
+      ['token:revoke', 'not-a-uuid'],
+    ]) {
+      await withCollectorFixture(async (fixture) => {
+        const run = await runRootCli(fixture, args);
+        assert.equal(run.code, 1);
+        assert.equal(run.stdout, '');
+        assert.equal(run.stderr, 'admin: invalid_arguments\n');
+        assert.deepEqual(await readApiRequests(fixture), []);
+      });
+    }
+  });
+
+  it('権限・不存在・最後のadmin・契約外応答を固定codeへ縮退し、生tokenを出さない', async () => {
+    for (const fixtureCase of [
+      { args: ['company:show'], status: 401, body: { error: { code: 'unauthorized' } }, code: 'collector_unauthorized' },
+      { args: ['company:show'], status: 403, body: { error: { code: 'forbidden' } }, code: 'forbidden' },
+      { args: ['token:issue', EMPLOYEE_ID, '--scope', 'employee'], status: 404, body: { error: { code: 'not_found' } }, code: 'employee_not_found' },
+      { args: ['token:revoke', TOKEN_ID], status: 404, body: { error: { code: 'not_found' } }, code: 'token_not_found' },
+      { args: ['token:revoke', TOKEN_ID], status: 409, body: { error: { code: 'conflict' } }, code: 'last_company_admin' },
+      { args: ['me'], status: 500, body: { error: { code: 'internal_error' }, marker: 'RAW_MARKER' }, code: 'collector_server_incompatible' },
+    ]) {
+      await withCollectorFixture(async (fixture) => {
+        await writeFile(fixture.keychainPath, DEFAULT_TOKEN, 'utf8');
+        await writeApiSpec(fixture, [{ status: fixtureCase.status, body: fixtureCase.body }], { includeCompatibilityProbe: false });
+        const run = await runRootCli(fixture, fixtureCase.args);
+        assert.equal(run.code, 1);
+        assert.equal(run.stdout, '');
+        assert.equal(run.stderr, `admin: ${fixtureCase.code}\n`);
+        assert.ok(!run.stderr.includes(DEFAULT_TOKEN));
+        assert.ok(!run.stderr.includes('RAW_MARKER'));
+      });
+    }
+  });
+});
