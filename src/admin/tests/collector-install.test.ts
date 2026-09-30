@@ -272,6 +272,24 @@ describe('collector:install', () => {
     });
   });
 
+  it('後続hook書込み失敗時は新規Codex hooks.jsonを不存在へrollbackする', async () => {
+    await withCollectorFixture(async (fixture) => {
+      await prepareCollectorInstall(fixture, { agents: ['claude_code'], tokenRegistered: false });
+      await mkdir(path.join(fixture.home, '.codex'), { recursive: true });
+      const claudeDirectory = path.dirname(hookPath(fixture, 'claude_code'));
+      await chmod(claudeDirectory, 0o500);
+      try {
+        const run = await runRootCli(fixture, ['collector:install'], { input: `${DEFAULT_TOKEN}\n` });
+        assert.equal(run.code, 1);
+        assert.equal(run.stderr, 'admin: collector_hook_error\n');
+        assert.equal(existsSync(hookPath(fixture, 'codex')), false, '失敗後に新規Codex hooks.jsonを残している');
+        assert.equal(await keychainToken(fixture), null, '失敗後に新規Keychain itemを残している');
+      } finally {
+        await chmod(claudeDirectory, 0o700);
+      }
+    });
+  });
+
   it('token登録済みならpromptせず、再installしても冪等にする', async () => {
     await withCollectorFixture(async (fixture) => {
       await prepareCollectorInstall(fixture, { tokenRegistered: true });
