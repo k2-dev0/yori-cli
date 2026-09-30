@@ -227,10 +227,15 @@ async function updateCollector(env: NodeJS.ProcessEnv): Promise<CollectorCommand
   const artifact = await readCollectorArtifact(env);
   rejectConflictingSameVersion(installed, artifact);
   const installerVersion = await readInstallerVersion();
+  const agents = await detectCollectorAgents(home);
+  const hookUpdates = await planCollectorHooks(home, agents, collectorLauncherPath(home), collectorConfigPath(home), 'install');
   const footprint = await captureInstallFootprint(home, artifact.version);
+  let hooksCommitted = false;
   try {
     await writeCollectorVersion(home, artifact);
     await writeCollectorLauncher(home);
+    await commitCollectorHooks(hookUpdates);
+    hooksCommitted = true;
     await writeCollectorInstallState(collectorInstallStatePath(home), {
       installer_version: installerVersion,
       collector_version: artifact.version,
@@ -240,14 +245,16 @@ async function updateCollector(env: NodeJS.ProcessEnv): Promise<CollectorCommand
     });
   } catch (error) {
     try {
+      if (hooksCommitted) {
+        await restoreCollectorHooks(hookUpdates);
+      }
       await rollbackInstallFootprint(home, artifact.version, footprint);
     } catch {
       throw new CollectorFailure('collector_rollback_failed');
     }
     throw error instanceof CollectorFailure ? error : new CollectorFailure('collector_install_error');
   }
-  const agents = await detectCollectorAgents(home);
-  return successOutput('updated', artifact.version, agents, { artifact: true, launcher: true, state: true });
+  return successOutput('updated', artifact.version, agents, { artifact: true, launcher: true, hooks: true, state: true });
 }
 
 async function fileMode(filePath: string): Promise<number | null> {
