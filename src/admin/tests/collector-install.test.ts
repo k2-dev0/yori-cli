@@ -135,7 +135,16 @@ describe('collector:install', () => {
         const hookJson = JSON.parse(await readText(hookPath(fixture, agent))) as { unrelated_setting?: unknown };
         assert.deepEqual(hookJson.unrelated_setting, { keep: true }, `${agent}の無関係設定を保持していない`);
         const commands = await collectorCommandsFor(fixture, agent);
-        assert.equal(commands.filter((command) => command.includes('notify')).length, 1, `${agent}のnotifyが1件ではない: ${JSON.stringify(commands)}`);
+        assert.equal(
+          commands.filter((command) => command.includes(' notify ') && !command.includes('notify-late')).length,
+          1,
+          `${agent}の同期notifyが1件ではない: ${JSON.stringify(commands)}`,
+        );
+        assert.equal(
+          commands.filter((command) => command.includes('notify-late')).length,
+          1,
+          `${agent}のnotify-lateが1件ではない: ${JSON.stringify(commands)}`,
+        );
         assert.equal(
           commands.filter((command) => command.includes('collect') && !command.includes('notify')).length,
           1,
@@ -148,14 +157,20 @@ describe('collector:install', () => {
         assert.ok(JSON.stringify(hookJson).includes('echo unrelated-prompt'), `${agent}の既存hookを消している`);
         assert.ok(JSON.stringify(hookJson).includes('echo unrelated-stop'), `${agent}の既存hookを消している`);
 
-        // notify entryだけにasync:trueを付け、collect entryには付けない。
+        // 3秒fast pathのnotifyは同期、late通知だけをasyncにし、collectも同期のまま維持する。
         const hookSections = (hookJson as { hooks?: Record<string, { hooks?: { command?: unknown; async?: unknown }[] }[]> }).hooks ?? {};
         const flattenHooks = (section: string) => (hookSections[section] ?? []).flatMap((entry) => entry.hooks ?? []);
-        const notifyEntry = flattenHooks('UserPromptSubmit').find((hook) => typeof hook.command === 'string' && hook.command.includes('notify'));
+        const notifyEntry = flattenHooks('UserPromptSubmit').find(
+          (hook) => typeof hook.command === 'string' && hook.command.includes(' notify ') && !hook.command.includes('notify-late'),
+        );
+        const notifyLateEntry = flattenHooks('UserPromptSubmit').find(
+          (hook) => typeof hook.command === 'string' && hook.command.includes('notify-late'),
+        );
         const collectEntry = flattenHooks('Stop').find(
           (hook) => typeof hook.command === 'string' && hook.command.includes('collect') && !hook.command.includes('notify'),
         );
-        assert.equal(notifyEntry?.async, true, `${agent}のnotify entryがasync:trueではない`);
+        assert.ok(notifyEntry !== undefined && !('async' in notifyEntry), `${agent}のnotify entryにasyncが付いている`);
+        assert.equal(notifyLateEntry?.async, true, `${agent}のnotify-late entryがasync:trueではない`);
         assert.ok(collectEntry !== undefined && !('async' in collectEntry), `${agent}のcollect entryにasyncが付いている`);
       }
 
@@ -230,7 +245,7 @@ describe('collector:install', () => {
       const run = await runRootCli(fixture, ['collector:install']);
       parseCollectorSuccess(run);
       const commands = await collectorCommandsFor(fixture, 'claude_code');
-      assert.equal(commands.length, 2, `claude_codeのhookが2件ではない: ${JSON.stringify(commands)}`);
+      assert.equal(commands.length, 3, `claude_codeのhookが3件ではない: ${JSON.stringify(commands)}`);
       for (const command of commands) {
         assertUsesStableLauncher(fixture, command, 'claude_code');
       }
@@ -247,7 +262,7 @@ describe('collector:install', () => {
       assert.deepEqual(output.agents, ['codex', 'claude_code']);
       const hookJson = JSON.parse(await readText(hookPath(fixture, 'codex'))) as Record<string, unknown>;
       assert.deepEqual(Object.keys(hookJson), ['hooks']);
-      assert.equal((await collectorCommandsFor(fixture, 'codex')).length, 2);
+      assert.equal((await collectorCommandsFor(fixture, 'codex')).length, 3);
     });
   });
 
@@ -257,7 +272,7 @@ describe('collector:install', () => {
       await mkdir(path.dirname(hookPath(fixture, 'codex')), { recursive: true });
       await writeFile(hookPath(fixture, 'codex'), '', 'utf8');
       parseCollectorSuccess(await runRootCli(fixture, ['collector:install']));
-      assert.equal((await collectorCommandsFor(fixture, 'codex')).length, 2);
+      assert.equal((await collectorCommandsFor(fixture, 'codex')).length, 3);
     });
   });
 
@@ -312,7 +327,7 @@ describe('collector:install', () => {
       assert.equal(await readText(collectorConfigPath(fixture)), configAfterFirst, '再installでconfigが変化した');
       for (const agent of ['codex', 'claude_code'] as const) {
         assert.equal(await readText(hookPath(fixture, agent)), hooksAfterFirst.get(agent), `${agent}のhookが冪等ではない`);
-        assert.equal((await collectorCommandsFor(fixture, agent)).length, 2, `${agent}のhookが重複した`);
+        assert.equal((await collectorCommandsFor(fixture, agent)).length, 3, `${agent}のhookが重複した`);
       }
     });
   });
