@@ -51,33 +51,10 @@ describe('社員向けproject API CLI', () => {
     });
   });
 
-  it('project:member:addはUUIDを正規化し、admin APIのdone/alreadyを返す', async () => {
-    for (const status of ['done', 'already'] as const) {
-      await withCollectorFixture(async (fixture) => {
-        await writeFile(fixture.keychainPath, DEFAULT_TOKEN, 'utf8');
-        await writeApiSpec(
-          fixture,
-          [{ status: 200, body: { status, project_id: PROJECT_ID, employee_id: EMPLOYEE_ID } }],
-          { includeCompatibilityProbe: false },
-        );
-
-        const output = parseCollectorSuccess(
-          await runRootCli(fixture, ['project:member:add', PROJECT_ID.toUpperCase(), EMPLOYEE_ID.toUpperCase()]),
-        );
-        assert.deepEqual(output, { status, project_id: PROJECT_ID, employee_id: EMPLOYEE_ID });
-        const requests = await readApiRequests(fixture);
-        assert.equal(requests.length, 1);
-        assert.equal(requests[0].url, `${DEFAULT_API_URL}/v1/projects/${PROJECT_ID}/members/${EMPLOYEE_ID}`);
-        assert.equal(requests[0].method, 'PUT');
-        assert.equal(requests[0].authorization, `Bearer ${DEFAULT_TOKEN}`);
-        assert.equal(requests[0].body, null);
-      });
-    }
-  });
-
   it('引数違反はKeychain・APIより先にinvalid_argumentsで拒否する', async () => {
     for (const args of [
       ['project:add', REPOSITORY],
+      ['project:member:add', PROJECT_ID, EMPLOYEE_ID],
       ['project:member:add'],
       ['project:member:add', 'not-a-uuid', EMPLOYEE_ID],
       ['project:member:add', PROJECT_ID, 'not-a-uuid'],
