@@ -18,7 +18,7 @@ npx --yes --package=yori-cli@<reviewed-version> yori inspect <company-uuid>
 
 `DATABASE_URL` をcommand行へ書かない。本番ではyoriのinternal Docker networkへ参加する一時Node container内でnpxを起動し、`/etc/yori/yori.env` の3値からcontainer内でURLを構成する。migration順序、review済みsource配置、read-only input mount、token非記録は [deployment手順](../deployment/README.md) を正本とする。
 
-`DATABASE_URL` はargvで受け取らない。未設定・空の場合は `invalid_admin_config` で終了する。ただし `redaction:replace` / `redaction:list` だけは、本番server `yori-production` の `/srv/yori` で `docker compose -p yori --env-file /etc/yori/yori.env -f deployment/compose.yaml --profile tools run --rm --no-deps -T` を実行し、固定package version（`yori-cli@<package version>`）へ `/usr/bin/ssh`（test/開発時は `YORI_SSH_BIN`）で委ねる。policy JSONは0600の一時fileだけへ置いてtrapで削除し、containerへread-only mountしてargv・stdout/stderrへ出さない。remoteの既知admin codeだけをそのまま返し、未知code・ssh transport failure・応答契約違反は `internal_error` へ縮退する。本番Composeはyori本体と同じDBの3値からURLを構成する。
+`DATABASE_URL` はargvで受け取らない。未設定・空の場合、`inspect` / `redaction:replace` / `redaction:list`は本番server `yori-production` の `/srv/yori` で `docker compose -p yori --env-file /etc/yori/yori.env -f deployment/compose.yaml --profile tools run --rm --no-deps -T` を実行し、固定package version（`yori-cli@<package version>`）へ `/usr/bin/ssh`（test/開発時は `YORI_SSH_BIN`）で委ねる。それ以外のDB commandは`invalid_admin_config`で終了する。policy JSONは0600の一時fileだけへ置いてtrapで削除し、containerへread-only mountしてargv・stdout/stderrへ出さない。remoteの既知admin codeだけをそのまま返し、未知code・ssh transport failure・応答契約違反は `internal_error` へ縮退する。本番Composeはyori本体と同じDBの3値からURLを構成する。
 
 `collector:install` / `collector:update` / `collector:doctor` / `collector:uninstall` / `collector:secret:*` はDBを使わず、`DATABASE_URL` を要求しない。macOS専用で、他platformでは `unsupported_platform` で端末を変更せずに終了する。導入手順と保持するfileは [README](../README.md) を参照。
 
@@ -32,7 +32,7 @@ DATABASE_URL='<test-or-development-database-url>' npm run --silent yori -- inspe
 
 ### Compose (tools profile)
 
-yori本体のmigration完了後、本番server `yori-production` の `/srv/yori` でtools profileの `migrate` serviceを一時Node環境として借りる。remote composeに `cli` serviceは無いため、migrationは実行せず `migrate` のentrypointとcommandだけを `npx` へ上書きする。`DATABASE_URL` 未設定時の `redaction:replace` / `redaction:list` がssh transportで組み立てるcommandも同じ形である。
+yori本体のmigration完了後、本番server `yori-production` の `/srv/yori` でtools profileの `migrate` serviceを一時Node環境として借りる。remote composeに `cli` serviceは無いため、migrationは実行せず `migrate` のentrypointとcommandだけを `npx` へ上書きする。`DATABASE_URL` 未設定時の `inspect` / `redaction:replace` / `redaction:list` がssh transportで組み立てるcommandも同じ形である。
 
 ```sh
 cd /srv/yori
@@ -157,6 +157,7 @@ sudo docker compose -p yori --env-file /etc/yori/yori.env -f deployment/compose.
 ### `inspect <company-uuid>`
 
 会社scopeの構成とtoken metadataを返す。生tokenとtoken hashは返さない。
+`DATABASE_URL`が未設定・空の場合はSSH transportへ委ね、remote応答をstrict検証する。
 
 ```json
 {"status":"ok","company":{"company_id":"<uuid>","name":"example","created_at":"2026-09-25T00:00:00.000Z"},"employees":[{"employee_id":"<uuid>","display_name":"Alice","created_at":"2026-09-25T00:00:00.000Z"}],"projects":[{"project_id":"<uuid>","repository_identifier":"github.com/example/project-a","created_at":"2026-09-25T00:00:00.000Z"}],"members":[{"project_id":"<uuid>","employee_id":"<uuid>","created_at":"2026-09-25T00:00:00.000Z"}],"tokens":[{"token_id":"<uuid>","employee_id":"<uuid>","created_at":"2026-09-25T00:00:00.000Z","revoked_at":null}]}
@@ -272,7 +273,7 @@ repositoryはUTF-8で1024バイト以内。host小文字・先頭slashなし・�
 | code | 意味 |
 |---|---|
 | `invalid_arguments` | 引数の数・command名・`inspect`のUUID形式が不正 |
-| `invalid_admin_config` | `DATABASE_URL` が未設定または空 |
+| `invalid_admin_config` | SSH対応外のDB commandで`DATABASE_URL`が未設定または空 |
 | `invalid_input_file` | 入力fileが読めない、またはJSONとして不正 |
 | `invalid_input` | 入力がcontract違反（unknown field、UUID形式、空文字、NUL、単独surrogate、上限超過、repository変換不能、ref重複） |
 | `bootstrap_already_completed` | 会社が既に存在する |
