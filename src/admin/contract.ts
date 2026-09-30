@@ -23,6 +23,7 @@ export const ADMIN_ERROR_CODES = [
   'agent_not_found',
   'collector_already_installed',
   'collector_artifact_invalid',
+  'collector_backfill_error',
   'collector_config_invalid',
   'collector_hook_conflict',
   'collector_hook_error',
