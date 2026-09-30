@@ -6,6 +6,7 @@ import path from 'node:path';
 import {
   DEFAULT_API_URL,
   DEFAULT_COLLECTOR_BUNDLE,
+  DEFAULT_COLLECTOR_GIT_SHA,
   DEFAULT_COLLECTOR_VERSION,
   DEFAULT_SETUP_RESPONSE,
   DEFAULT_TOKEN,
@@ -110,11 +111,15 @@ describe('collector:install', () => {
 
       // setup APIはBearer付きPOST /v1/collector/setupでcanonical repositoryだけを送る。
       const requests = await readApiRequests(fixture);
-      assert.equal(requests.length, 1, `setup APIの呼出し回数が違う: ${JSON.stringify(requests)}`);
+      assert.equal(requests.length, 2, `互換性probe＋setup APIの呼出し回数が違う: ${JSON.stringify(requests)}`);
       assert.equal(requests[0].url, `${DEFAULT_API_URL}/v1/collector/setup`);
       assert.equal(requests[0].method, 'POST');
-      assert.equal(requests[0].authorization, `Bearer ${DEFAULT_TOKEN}`);
-      assert.deepEqual(JSON.parse(String(requests[0].body)), { repository: 'github.com/example/repo' });
+      assert.equal(requests[0].authorization, null, '互換性probeへtokenを送っている');
+      assert.deepEqual(JSON.parse(String(requests[0].body)), { repository: 'github.com/yori/collector-compatibility-probe' });
+      assert.equal(requests[1].url, `${DEFAULT_API_URL}/v1/collector/setup`);
+      assert.equal(requests[1].method, 'POST');
+      assert.equal(requests[1].authorization, `Bearer ${DEFAULT_TOKEN}`);
+      assert.deepEqual(JSON.parse(String(requests[1].body)), { repository: 'github.com/example/repo' });
 
       // version directoryへbundleとchecksum付きmanifestを置く。
       const versionDir = collectorVersionDir(fixture, DEFAULT_COLLECTOR_VERSION);
@@ -123,6 +128,7 @@ describe('collector:install', () => {
       assert.equal(await readText(path.join(versionDir, 'yori-collector.mjs')), DEFAULT_COLLECTOR_BUNDLE);
       const manifest = JSON.parse(await readText(path.join(versionDir, 'collector-manifest.json'))) as Record<string, unknown>;
       assert.equal(manifest.checksum, sha256Hex(DEFAULT_COLLECTOR_BUNDLE));
+      assert.equal(manifest.git_sha, DEFAULT_COLLECTOR_GIT_SHA);
 
       // 2 agentのhooksを更新し、無関係設定と既存hookを保持する。
       for (const agent of ['codex', 'claude_code'] as const) {
@@ -178,11 +184,12 @@ describe('collector:install', () => {
       const packageJson = JSON.parse(await readText(path.join(REPO_ROOT, 'package.json'))) as { version: string };
       assert.deepEqual(
         Object.keys(installState).sort(),
-        ['checksum', 'collector_version', 'installer_version', 'policy_version'],
+        ['checksum', 'collector_version', 'git_sha', 'installer_version', 'policy_version'],
         `install.jsonのfieldが違う: ${installStateText}`,
       );
       assert.equal(installState.installer_version, packageJson.version);
       assert.equal(installState.collector_version, DEFAULT_COLLECTOR_VERSION);
+      assert.equal(installState.git_sha, DEFAULT_COLLECTOR_GIT_SHA);
       assert.equal(installState.checksum, sha256Hex(DEFAULT_COLLECTOR_BUNDLE));
       assert.equal(installState.policy_version, 3);
       assert.ok(!installStateText.includes(DEFAULT_TOKEN), 'install.jsonへtokenが出ている');
@@ -231,6 +238,40 @@ describe('collector:install', () => {
     });
   });
 
+  it('~/.codexが存在すればhooks.json未作成でもCodexを検出して安全なJSONから作成する', async () => {
+    await withCollectorFixture(async (fixture) => {
+      await prepareCollectorInstall(fixture, { agents: ['claude_code'] });
+      await mkdir(path.join(fixture.home, '.codex'), { recursive: true });
+      const run = await runRootCli(fixture, ['collector:install']);
+      const output = parseCollectorSuccess(run);
+      assert.deepEqual(output.agents, ['codex', 'claude_code']);
+      const hookJson = JSON.parse(await readText(hookPath(fixture, 'codex'))) as Record<string, unknown>;
+      assert.deepEqual(Object.keys(hookJson), ['hooks']);
+      assert.equal((await collectorCommandsFor(fixture, 'codex')).length, 2);
+    });
+  });
+
+  it('0バイトのCodex hooks.jsonを空objectとして修復する', async () => {
+    await withCollectorFixture(async (fixture) => {
+      await prepareCollectorInstall(fixture, { agents: ['claude_code'] });
+      await mkdir(path.dirname(hookPath(fixture, 'codex')), { recursive: true });
+      await writeFile(hookPath(fixture, 'codex'), '', 'utf8');
+      parseCollectorSuccess(await runRootCli(fixture, ['collector:install']));
+      assert.equal((await collectorCommandsFor(fixture, 'codex')).length, 2);
+    });
+  });
+
+  it('新規作成予定のCodex hooks.jsonはAPI失敗時に作成しない', async () => {
+    await withCollectorFixture(async (fixture) => {
+      await prepareCollectorInstall(fixture, { agents: ['claude_code'] });
+      await mkdir(path.join(fixture.home, '.codex'), { recursive: true });
+      await writeApiSpec(fixture, [{ status: 401, body: { error: { code: 'unauthorized' } } }]);
+      const run = await runRootCli(fixture, ['collector:install']);
+      assert.equal(run.stderr, 'admin: collector_unauthorized\n');
+      assert.equal(existsSync(hookPath(fixture, 'codex')), false, 'API失敗でCodex hooks.jsonを残している');
+    });
+  });
+
   it('token登録済みならpromptせず、再installしても冪等にする', async () => {
     await withCollectorFixture(async (fixture) => {
       await prepareCollectorInstall(fixture, { tokenRegistered: true });
@@ -249,7 +290,7 @@ describe('collector:install', () => {
 
       const addCalls = (await readSecurityCalls(fixture)).filter((args) => args[0] === 'add-generic-password');
       assert.equal(addCalls.length, 0, `token登録済みなのにpromptしている: ${JSON.stringify(addCalls)}`);
-      assert.equal((await readApiRequests(fixture)).length, 2, '同version再installでsetup APIを省略している');
+      assert.equal((await readApiRequests(fixture)).length, 4, '同version再installで互換性probeまたはsetup APIを省略している');
       assert.equal(await readText(collectorConfigPath(fixture)), configAfterFirst, '再installでconfigが変化した');
       for (const agent of ['codex', 'claude_code'] as const) {
         assert.equal(await readText(hookPath(fixture, agent)), hooksAfterFirst.get(agent), `${agent}のhookが冪等ではない`);
@@ -263,7 +304,8 @@ describe('collector:install', () => {
     for (const status of [400, 401, 404, 500]) {
       await withCollectorFixture(async (fixture) => {
         await prepareCollectorInstall(fixture, { agents: ['codex', 'claude_code'] });
-        await writeApiSpec(fixture, [{ status, body: { error: 'fixture_error', marker: 'API_BODY_MARKER' } }]);
+        const errorCode = status === 400 ? 'invalid_request' : status === 401 ? 'unauthorized' : status === 404 ? 'not_found' : 'internal_error';
+        await writeApiSpec(fixture, [{ status, body: { error: { code: errorCode } } }]);
         const codexBefore = await readText(hookPath(fixture, 'codex'));
         const claudeBefore = await readText(hookPath(fixture, 'claude_code'));
         const run = await runRootCli(fixture, ['collector:install']);
@@ -284,6 +326,28 @@ describe('collector:install', () => {
       });
     }
     assert.equal(codes.size, 4, `400/401/404/500が異なる固定codeになっていない: ${[...codes].join(' / ')}`);
+  });
+
+  it('互換性probeまたはsetupのFastify route-not-foundをcollector_server_incompatibleへ変換する', async () => {
+    const fastify404 = {
+      status: 404,
+      body: { message: 'Route POST:/v1/collector/setup not found', error: 'Not Found', statusCode: 404 },
+    };
+    for (const phase of ['probe', 'setup'] as const) {
+      await withCollectorFixture(async (fixture) => {
+        await prepareCollectorInstall(fixture, { tokenRegistered: true });
+        await writeApiSpec(
+          fixture,
+          phase === 'probe' ? [fastify404] : [{ status: 401, body: { error: { code: 'unauthorized' } } }, fastify404],
+          { includeCompatibilityProbe: false },
+        );
+        const run = await runRootCli(fixture, ['collector:install']);
+        assert.equal(run.code, 1);
+        assert.equal(run.stdout, '');
+        assert.equal(run.stderr, 'admin: collector_server_incompatible\n');
+        assert.ok(!run.stderr.includes('Route POST'), 'Fastify本文を出力している');
+      });
+    }
   });
 
   it('checksum不一致のartifactをinstallで拒否し、無変更で失敗する', async () => {
@@ -487,7 +551,7 @@ describe('collector:install', () => {
   it('tokenを新規作成したAPI 404失敗ではKeychain itemをrollbackする', async () => {
     await withCollectorFixture(async (fixture) => {
       await prepareCollectorInstall(fixture, { tokenRegistered: false });
-      await writeApiSpec(fixture, [{ status: 404, body: { error: 'not_found' } }]);
+      await writeApiSpec(fixture, [{ status: 404, body: { error: { code: 'not_found' } } }]);
       const run = await runRootCli(fixture, ['collector:install'], { input: `${DEFAULT_TOKEN}\n` });
       assert.equal(run.code, 1);
       assert.equal(run.stderr, 'admin: project_not_found\n');
