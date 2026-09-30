@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// yori本体（YORI_REPOSITORY、既定../yori）の配布用collector artifactをSHA-256検証して
+// yori本体（YORI_REPOSITORY、既定../yori）の配布用collector artifactをversion・Git SHA・SHA-256検証して
 // yori-cliのdist/collectorへcopyする。2 fileはstagingから切り替え、片方失敗時は元へ戻す。
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
@@ -7,6 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const CLI_VERSION = JSON.parse(readFileSync(path.join(REPO_ROOT, 'package.json'), 'utf8')).version;
 const SOURCE_DIR = path.join(path.resolve(REPO_ROOT, process.env.YORI_REPOSITORY ?? '../yori'), 'dist', 'collector');
 const OUT_DIR = path.join(REPO_ROOT, 'dist', 'collector');
 const BUNDLE_NAME = 'yori-collector.mjs';
@@ -52,7 +53,9 @@ if (
   manifest === null ||
   manifest.file !== BUNDLE_NAME ||
   typeof manifest.version !== 'string' ||
-  manifest.version.length === 0 ||
+  manifest.version !== CLI_VERSION ||
+  typeof manifest.git_sha !== 'string' ||
+  !/^[0-9a-f]{40}$/.test(manifest.git_sha) ||
   typeof manifest.checksum !== 'string'
 ) {
   fail('manifestのversion/file/checksumが不正です');
