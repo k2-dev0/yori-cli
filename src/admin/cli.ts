@@ -10,6 +10,7 @@ import {
   issueTokenViaApi,
   loadCompanyViaApi,
   loadMeViaApi,
+  renameEmployeeViaApi,
   revokeTokenViaApi,
 } from '../collector/account.js';
 import { inspectCompanyOverSsh, listRedactionPolicyOverSsh, replaceRedactionPolicyOverSsh } from './ssh-transport.js';
@@ -211,6 +212,15 @@ async function runEmployeeAddApi(env: NodeJS.ProcessEnv, rest: string[]): Promis
   return result.ok ? succeed(result.value) : fail(result.code);
 }
 
+async function runEmployeeRenameApi(env: NodeJS.ProcessEnv, rest: string[]): Promise<number> {
+  if (rest.length !== 2) return fail('invalid_arguments');
+  const employeeId = z.uuid().safeParse(rest[0]);
+  const displayName = employeeCreateInputSchema.shape.display_name.safeParse(rest[1]);
+  if (!employeeId.success || !displayName.success) return fail('invalid_arguments');
+  const result = await renameEmployeeViaApi(env, employeeId.data.toLowerCase(), displayName.data);
+  return result.ok ? succeed(result.value) : fail(result.code);
+}
+
 async function runTokenRevokeApi(env: NodeJS.ProcessEnv, rest: string[]): Promise<number | null> {
   if (rest.length !== 1) return fail('invalid_arguments');
   const tokenId = z.uuid().safeParse(rest[0]);
@@ -241,6 +251,8 @@ export async function runCli(argv: string[], env: NodeJS.ProcessEnv = process.en
         return await runInputCommand(env, memberInputSchema, rest, (pool, input) => addMember(pool, input));
       case 'employee:add':
         return await runEmployeeAddApi(env, rest);
+      case 'employee:rename':
+        return await runEmployeeRenameApi(env, rest);
       case 'member:remove':
         return await runInputCommand(env, memberInputSchema, rest, (pool, input) => removeMember(pool, input));
       case 'token:issue':
