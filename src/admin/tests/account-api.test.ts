@@ -95,6 +95,79 @@ describe('社員・会社・token API CLI', () => {
     });
   });
 
+  it('employee:add --issue-tokenは社員作成後にemployee tokenを発行し、社員情報と生tokenを一度だけ返す', async () => {
+    await withCollectorFixture(async (fixture) => {
+      await writeFile(fixture.adminKeychainPath, ADMIN_TOKEN, 'utf8');
+      const created = {
+        status: 'done',
+        employee_id: NEW_EMPLOYEE_ID,
+        display_name: 'akiyama',
+        created_at: CREATED_AT,
+      };
+      const issued = {
+        status: 'done',
+        token_id: TOKEN_ID,
+        employee_id: NEW_EMPLOYEE_ID,
+        scope: 'employee',
+        token: 'yori_synthetic-issued-token',
+      };
+      await writeApiSpec(
+        fixture,
+        [
+          { status: 201, body: created },
+          { status: 201, body: issued },
+        ],
+        { includeCompatibilityProbe: false },
+      );
+
+      assert.deepEqual(parseCollectorSuccess(await runRootCli(fixture, ['employee:add', 'akiyama', '--issue-token'])), {
+        status: 'done',
+        employee_id: NEW_EMPLOYEE_ID,
+        display_name: 'akiyama',
+        token_id: TOKEN_ID,
+        scope: 'employee',
+        token: 'yori_synthetic-issued-token',
+      });
+
+      const requests = await readApiRequests(fixture);
+      assert.equal(requests.length, 2);
+      assert.equal(requests[0].url, `${DEFAULT_API_URL}/v1/employees`);
+      assert.equal(requests[0].method, 'POST');
+      assert.deepEqual(JSON.parse(String(requests[0].body)), { display_name: 'akiyama' });
+      assert.equal(requests[1].url, `${DEFAULT_API_URL}/v1/employees/${NEW_EMPLOYEE_ID}/tokens`);
+      assert.equal(requests[1].method, 'POST');
+      assert.deepEqual(JSON.parse(String(requests[1].body)), { scope: 'employee' });
+      assert.ok(requests.every((request) => request.authorization === `Bearer ${ADMIN_TOKEN}`));
+    });
+  });
+
+  it('employee:add --issue-tokenのtoken発行失敗は固定errorにし、社員作成を再実行せず生tokenを出さない', async () => {
+    await withCollectorFixture(async (fixture) => {
+      await writeFile(fixture.adminKeychainPath, ADMIN_TOKEN, 'utf8');
+      await writeApiSpec(
+        fixture,
+        [
+          {
+            status: 201,
+            body: { status: 'done', employee_id: NEW_EMPLOYEE_ID, display_name: 'akiyama', created_at: CREATED_AT },
+          },
+          { status: 500, body: { error: { code: 'internal_error' }, token: 'RAW_TOKEN_MARKER' } },
+        ],
+        { includeCompatibilityProbe: false },
+      );
+
+      const run = await runRootCli(fixture, ['employee:add', 'akiyama', '--issue-token']);
+      assert.equal(run.code, 1);
+      assert.equal(run.stdout, '');
+      assert.equal(run.stderr, 'admin: internal_error\n');
+      assert.ok(!run.stderr.includes('RAW_TOKEN_MARKER'));
+      const requests = await readApiRequests(fixture);
+      assert.equal(requests.length, 2, 'token発行失敗後に社員作成を再実行している');
+      assert.equal(requests[0].url, `${DEFAULT_API_URL}/v1/employees`);
+      assert.equal(requests[1].url, `${DEFAULT_API_URL}/v1/employees/${NEW_EMPLOYEE_ID}/tokens`);
+    });
+  });
+
   it('member:addの文字列引数を社員作成APIとして扱わない', async () => {
     await withCollectorFixture(async (fixture) => {
       const run = await runRootCli(fixture, ['member:add', 'akiyama']);
@@ -130,6 +203,8 @@ describe('社員・会社・token API CLI', () => {
       ['employee:add'],
       ['employee:add', ''],
       ['employee:add', 'akiyama', 'extra'],
+      ['employee:add', 'akiyama', '--issue-token', 'extra'],
+      ['employee:add', 'akiyama', '--scope', 'employee'],
       ['token:issue', 'not-a-uuid', '--scope', 'employee'],
       ['token:issue', EMPLOYEE_ID, '--scope', 'owner'],
       ['token:issue', EMPLOYEE_ID, 'employee'],
