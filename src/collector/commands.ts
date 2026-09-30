@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { lstat, readFile, rm, stat } from 'node:fs/promises';
 import path from 'node:path';
@@ -375,7 +376,80 @@ type CollectorCommandResult =
   | CollectorCommandOutput
   | CollectorDoctorOutput
   | CollectorSecretOutput
-  | CollectorSecretListOutput;
+  | CollectorSecretListOutput
+  | Record<string, unknown>;
+
+const BACKFILL_SOURCES = ['codex', 'claude_code', 'deepseek_harness'] as const;
+
+function parseBackfillArguments(args: readonly string[]): { dryRun: boolean; source?: (typeof BACKFILL_SOURCES)[number] } {
+  let dryRun = false;
+  let source: (typeof BACKFILL_SOURCES)[number] | undefined;
+  for (let index = 0; index < args.length; index += 1) {
+    const key = args[index];
+    if (key === '--dry-run') {
+      if (dryRun) {
+        throw new CollectorFailure('collector_invalid_request');
+      }
+      dryRun = true;
+      continue;
+    }
+    if (key === '--source') {
+      const value = args[index + 1];
+      if (source !== undefined || value === undefined || !BACKFILL_SOURCES.includes(value as (typeof BACKFILL_SOURCES)[number])) {
+        throw new CollectorFailure('collector_invalid_request');
+      }
+      source = value as (typeof BACKFILL_SOURCES)[number];
+      index += 1;
+      continue;
+    }
+    throw new CollectorFailure('collector_invalid_request');
+  }
+  return { dryRun, source };
+}
+
+// 起動時cwdを一度だけ固定し、stable launcher経由で配布済みcollectorのbackfillを実行する。
+async function backfillCollector(args: readonly string[], env: NodeJS.ProcessEnv): Promise<Record<string, unknown>> {
+  const parsed = parseBackfillArguments(args);
+  const home = collectorHome(env);
+  const installed = await readCollectorInstallState(collectorInstallStatePath(home));
+  if (installed === null || !existsSync(collectorLauncherPath(home))) {
+    throw new CollectorFailure('collector_not_installed');
+  }
+  const repositoryPath = process.cwd();
+  const childArgs = [
+    collectorLauncherPath(home),
+    'backfill',
+    '--repository',
+    repositoryPath,
+    '--config',
+    collectorConfigPath(home),
+  ];
+  if (parsed.dryRun) {
+    childArgs.push('--dry-run');
+  }
+  if (parsed.source !== undefined) {
+    childArgs.push('--source', parsed.source);
+  }
+  const result = spawnSync(process.execPath, childArgs, {
+    cwd: repositoryPath,
+    env,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+    maxBuffer: 64 * 1024,
+  });
+  if (result.status !== 0 || result.stderr !== '' || typeof result.stdout !== 'string') {
+    throw new CollectorFailure('collector_backfill_error');
+  }
+  try {
+    const output: unknown = JSON.parse(result.stdout);
+    if (typeof output !== 'object' || output === null || Array.isArray(output)) {
+      throw new Error('invalid output');
+    }
+    return output as Record<string, unknown>;
+  } catch {
+    throw new CollectorFailure('collector_backfill_error');
+  }
+}
 
 // collector:secret:add/list/remove。値はKeychainだけへ置き、indexはlabelだけを持つ。
 async function runCollectorSecretCommand(
@@ -425,6 +499,8 @@ export async function runCollectorCommand(
     switch (command) {
       case 'collector:install':
         return { ok: true, value: await installCollector(env) };
+      case 'collector:backfill':
+        return { ok: true, value: await backfillCollector(args, env) };
       case 'collector:update':
         return { ok: true, value: await updateCollector(env) };
       case 'collector:doctor':
