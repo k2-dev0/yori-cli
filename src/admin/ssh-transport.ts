@@ -5,6 +5,7 @@ import {
   ADMIN_ERROR_CODES,
   type AdminErrorCode,
   type AdminResult,
+  type InspectOutput,
   type RedactionListOutput,
   type RedactionReplaceInput,
   type RedactionReplaceOutput,
@@ -36,6 +37,24 @@ const listOutputSchema = z.strictObject({
   terms: z.array(z.string()),
   suspicion_mode: z.enum(['observe', 'block']),
   detector_version: z.literal('initial-v1'),
+});
+const timestampSchema = z.iso.datetime({ offset: true });
+const inspectOutputSchema = z.strictObject({
+  status: z.literal('ok'),
+  company: z.strictObject({ company_id: z.uuid(), name: z.string(), created_at: timestampSchema }),
+  employees: z.array(z.strictObject({ employee_id: z.uuid(), display_name: z.string(), created_at: timestampSchema })),
+  projects: z.array(
+    z.strictObject({ project_id: z.uuid(), repository_identifier: z.string(), created_at: timestampSchema }),
+  ),
+  members: z.array(z.strictObject({ project_id: z.uuid(), employee_id: z.uuid(), created_at: timestampSchema })),
+  tokens: z.array(
+    z.strictObject({
+      token_id: z.uuid(),
+      employee_id: z.uuid(),
+      created_at: timestampSchema,
+      revoked_at: timestampSchema.nullable(),
+    }),
+  ),
 });
 
 type ListOutput = z.infer<typeof listOutputSchema>;
@@ -92,6 +111,11 @@ function replaceScript(version: string, input: RedactionReplaceInput): string {
 // listは会社UUIDだけを固定versionのCLIへ渡す。
 function listScript(version: string, companyId: string): string {
   return ['set -eu', `cd ${REMOTE_DIR}`, remoteCliInvocation(version, [], ['redaction:list', companyId]), ''].join('\n');
+}
+
+// inspectは会社UUIDだけを固定versionのCLIへ渡す。
+function inspectScript(version: string, companyId: string): string {
+  return ['set -eu', `cd ${REMOTE_DIR}`, remoteCliInvocation(version, [], ['inspect', companyId]), ''].join('\n');
 }
 
 interface SshResult {
@@ -203,4 +227,12 @@ export async function listRedactionPolicyOverSsh(
   }
   const policy = validatedListOutput(result.value);
   return policy === null ? { ok: false, code: 'internal_error' } : { ok: true, value: policy };
+}
+
+export async function inspectCompanyOverSsh(env: NodeJS.ProcessEnv, companyId: string): Promise<AdminResult<InspectOutput>> {
+  const version = await cliVersion();
+  if (version === null) {
+    return { ok: false, code: 'internal_error' };
+  }
+  return await runRemote(env, inspectScript(version, companyId), inspectOutputSchema);
 }
