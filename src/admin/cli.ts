@@ -231,6 +231,8 @@ export async function runCli(argv: string[], env: NodeJS.ProcessEnv = process.en
       case 'member:add':
         return (await runMemberAddApi(env, rest)) ??
           (await runInputCommand(env, memberInputSchema, rest, (pool, input) => addMember(pool, input)));
+      case 'employee:add':
+        return (await runMemberAddApi(env, rest)) ?? fail('invalid_arguments');
       case 'member:remove':
         return await runInputCommand(env, memberInputSchema, rest, (pool, input) => removeMember(pool, input));
       case 'token:issue':
