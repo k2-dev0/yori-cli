@@ -126,6 +126,45 @@ describe('collector:update', () => {
     });
   });
 
+  it('旧async notifyだけの設定を同期notify・async notify-late・collectへ更新する', async () => {
+    await withCollectorFixture(async (fixture) => {
+      await installV1(fixture);
+      for (const agent of AGENTS) {
+        const filePath = hookPath(fixture, agent);
+        const json = JSON.parse(await readText(filePath)) as {
+          hooks: Record<string, Array<{ hooks?: Array<{ command?: string; async?: boolean }> }>>;
+        };
+        const promptEntries = json.hooks.UserPromptSubmit ?? [];
+        for (const entry of promptEntries) {
+          entry.hooks = (entry.hooks ?? []).filter((hook) => !hook.command?.includes('notify-late'));
+          for (const hook of entry.hooks) {
+            if (hook.command?.includes(' notify ')) {
+              hook.async = true;
+            }
+          }
+        }
+        json.hooks.UserPromptSubmit = promptEntries.filter((entry) => (entry.hooks?.length ?? 0) > 0);
+        await writeFile(filePath, `${JSON.stringify(json, null, 2)}\n`, 'utf8');
+      }
+
+      await writeCollectorArtifact(fixture, { version: V2_VERSION, content: V2_BUNDLE });
+      parseCollectorSuccess(await runRootCli(fixture, ['collector:update']));
+
+      for (const agent of AGENTS) {
+        const commands = await collectorCommandsFor(fixture, agent);
+        assert.equal(commands.length, 3, `${agent}のhookを3本へ移行していない: ${JSON.stringify(commands)}`);
+        const json = JSON.parse(await readText(hookPath(fixture, agent))) as {
+          hooks: Record<string, Array<{ hooks?: Array<{ command?: string; async?: boolean }> }>>;
+        };
+        const promptHooks = (json.hooks.UserPromptSubmit ?? []).flatMap((entry) => entry.hooks ?? []);
+        const notify = promptHooks.find((hook) => hook.command?.includes(' notify '));
+        const notifyLate = promptHooks.find((hook) => hook.command?.includes('notify-late'));
+        assert.ok(notify !== undefined && !('async' in notify), `${agent}のnotifyを同期化していない`);
+        assert.equal(notifyLate?.async, true, `${agent}のnotify-lateをasyncにしていない`);
+      }
+    });
+  });
+
   it('checksum不一致の新versionでは切り替えず、旧versionを実行し続ける', async () => {
     await withCollectorFixture(async (fixture) => {
       await installV1(fixture);
@@ -232,7 +271,7 @@ describe('collector:uninstall', () => {
       parseCollectorSuccess(await runRootCli(fixture, ['collector:install']));
       const addCalls = (await readSecurityCalls(fixture)).filter((args) => args[0] === 'add-generic-password');
       assert.equal(addCalls.length, 0, '再installでKeychain promptをやり直している');
-      assert.equal((await collectorCommandsFor(fixture, 'codex')).length, 2);
+      assert.equal((await collectorCommandsFor(fixture, 'codex')).length, 3);
     });
   });
 });
