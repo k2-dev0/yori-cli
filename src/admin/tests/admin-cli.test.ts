@@ -96,8 +96,16 @@ async function addMember(companyId: string, projectId: string, employeeId: strin
   return runWithFile('member:add', 'member.json', { company_id: companyId, project_id: projectId, employee_id: employeeId });
 }
 
-async function issueTokenViaCli(companyId: string, employeeId: string): Promise<Record<string, unknown>> {
-  const run = await runWithFile('token:issue', 'token.json', { company_id: companyId, employee_id: employeeId });
+async function issueTokenViaCli(
+  companyId: string,
+  employeeId: string,
+  scope?: 'employee' | 'company_admin',
+): Promise<Record<string, unknown>> {
+  const run = await runWithFile('token:issue', 'token.json', {
+    company_id: companyId,
+    employee_id: employeeId,
+    ...(scope === undefined ? {} : { scope }),
+  });
   return parseSuccessJson(run);
 }
 
@@ -326,6 +334,21 @@ describe('個別コマンド', () => {
       const auth = await authenticateWithToken(pool, str(token.token));
       assert.deepEqual(auth, { companyId, employeeId });
     }
+  });
+
+  it('token:issueのscope省略はemployee、明示時はcompany_adminとして保存する', async () => {
+    const companyId = await createCompany();
+    const employeeId = await createEmployee(companyId, 'Admin');
+    const employeeToken = await issueTokenViaCli(companyId, employeeId);
+    const adminToken = await issueTokenViaCli(companyId, employeeId, 'company_admin');
+
+    assert.equal(employeeToken.scope, 'employee');
+    assert.equal(adminToken.scope, 'company_admin');
+    const rows = await pool.query<{ id: string; scope: string }>(
+      'SELECT id, scope FROM auth_tokens WHERE id = ANY($1) ORDER BY scope',
+      [[employeeToken.token_id, adminToken.token_id]],
+    );
+    assert.deepEqual(rows.rows.map((row) => row.scope), ['company_admin', 'employee']);
   });
 
   it('token:revokeで失効させるとAPI認証SQLが拒否する', async () => {
