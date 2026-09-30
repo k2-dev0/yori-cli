@@ -53,6 +53,7 @@ describe('collector:backfill', () => {
       await installCollectorWithoutSetup(fixture, BACKFILL_BUNDLE);
       for (const args of [
         ['collector:backfill', '--source', 'other'],
+        ['collector:backfill', '--source', 'cursor'],
         ['collector:backfill', '--repository', '/tmp/other'],
         ['collector:backfill', '--dry-run', 'extra'],
       ]) {
