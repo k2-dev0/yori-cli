@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
-import { writeFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import { describe, it } from 'node:test';
 import {
   DEFAULT_API_URL,
   DEFAULT_TOKEN,
+  adminKeychainToken,
   parseCollectorSuccess,
   readApiRequests,
   runRootCli,
@@ -16,6 +17,7 @@ const EMPLOYEE_ID = '01930000-0000-7000-8000-000000000082';
 const TOKEN_ID = '01930000-0000-7000-8000-000000000083';
 const PROJECT_ID = '01930000-0000-7000-8000-000000000084';
 const CREATED_AT = '2026-09-30T00:00:00.000Z';
+const ADMIN_TOKEN = 'yori_fixture_admin_token_7f3d2a';
 
 const meResponse = {
   company: { company_id: COMPANY_ID, name: 'example' },
@@ -34,18 +36,18 @@ const companyResponse = {
 describe('社員・会社・token API CLI', () => {
   it('meとcompany:showはKeychain tokenでstrict metadataを取得する', async () => {
     for (const command of [
-      { args: ['me'], path: '/v1/me', body: meResponse },
-      { args: ['company:show'], path: '/v1/company', body: companyResponse },
+      { args: ['me'], path: '/v1/me', body: meResponse, token: DEFAULT_TOKEN, admin: false },
+      { args: ['company:show'], path: '/v1/company', body: companyResponse, token: ADMIN_TOKEN, admin: true },
     ]) {
       await withCollectorFixture(async (fixture) => {
-        await writeFile(fixture.keychainPath, DEFAULT_TOKEN, 'utf8');
+        await writeFile(command.admin ? fixture.adminKeychainPath : fixture.keychainPath, command.token, 'utf8');
         await writeApiSpec(fixture, [{ status: 200, body: command.body }], { includeCompatibilityProbe: false });
         assert.deepEqual(parseCollectorSuccess(await runRootCli(fixture, command.args)), command.body);
         const requests = await readApiRequests(fixture);
         assert.equal(requests.length, 1);
         assert.equal(requests[0].url, `${DEFAULT_API_URL}${command.path}`);
         assert.equal(requests[0].method, 'GET');
-        assert.equal(requests[0].authorization, `Bearer ${DEFAULT_TOKEN}`);
+        assert.equal(requests[0].authorization, `Bearer ${command.token}`);
         assert.equal(requests[0].body, null);
       });
     }
@@ -54,7 +56,7 @@ describe('社員・会社・token API CLI', () => {
   it('token:issueは社員UUIDとscopeをAPIへ送り、生tokenを一度だけ返す', async () => {
     for (const scope of ['employee', 'company_admin'] as const) {
       await withCollectorFixture(async (fixture) => {
-        await writeFile(fixture.keychainPath, DEFAULT_TOKEN, 'utf8');
+        await writeFile(fixture.adminKeychainPath, ADMIN_TOKEN, 'utf8');
         const issued = { status: 'done', token_id: TOKEN_ID, employee_id: EMPLOYEE_ID, scope, token: 'yori_synthetic-issued-token' };
         await writeApiSpec(fixture, [{ status: 201, body: issued }], { includeCompatibilityProbe: false });
         const output = parseCollectorSuccess(
@@ -64,7 +66,7 @@ describe('社員・会社・token API CLI', () => {
         const requests = await readApiRequests(fixture);
         assert.equal(requests[0].url, `${DEFAULT_API_URL}/v1/employees/${EMPLOYEE_ID}/tokens`);
         assert.equal(requests[0].method, 'POST');
-        assert.equal(requests[0].authorization, `Bearer ${DEFAULT_TOKEN}`);
+        assert.equal(requests[0].authorization, `Bearer ${ADMIN_TOKEN}`);
         assert.deepEqual(JSON.parse(String(requests[0].body)), { scope });
       });
     }
@@ -73,7 +75,7 @@ describe('社員・会社・token API CLI', () => {
   it('token:revokeのUUID引数はAPI DELETEへ送り、done/alreadyを返す', async () => {
     for (const status of ['done', 'already'] as const) {
       await withCollectorFixture(async (fixture) => {
-        await writeFile(fixture.keychainPath, DEFAULT_TOKEN, 'utf8');
+        await writeFile(fixture.adminKeychainPath, ADMIN_TOKEN, 'utf8');
         await writeApiSpec(fixture, [{ status: 200, body: { status, token_id: TOKEN_ID } }], { includeCompatibilityProbe: false });
         assert.deepEqual(parseCollectorSuccess(await runRootCli(fixture, ['token:revoke', TOKEN_ID.toUpperCase()])), {
           status,
@@ -82,7 +84,7 @@ describe('社員・会社・token API CLI', () => {
         const requests = await readApiRequests(fixture);
         assert.equal(requests[0].url, `${DEFAULT_API_URL}/v1/tokens/${TOKEN_ID}`);
         assert.equal(requests[0].method, 'DELETE');
-        assert.equal(requests[0].authorization, `Bearer ${DEFAULT_TOKEN}`);
+        assert.equal(requests[0].authorization, `Bearer ${ADMIN_TOKEN}`);
         assert.equal(requests[0].body, null);
       });
     }
@@ -117,15 +119,27 @@ describe('社員・会社・token API CLI', () => {
       { args: ['me'], status: 500, body: { error: { code: 'internal_error' }, marker: 'RAW_MARKER' }, code: 'collector_server_incompatible' },
     ]) {
       await withCollectorFixture(async (fixture) => {
-        await writeFile(fixture.keychainPath, DEFAULT_TOKEN, 'utf8');
+        const adminCommand = fixtureCase.args[0] !== 'me';
+        await writeFile(adminCommand ? fixture.adminKeychainPath : fixture.keychainPath, adminCommand ? ADMIN_TOKEN : DEFAULT_TOKEN, 'utf8');
         await writeApiSpec(fixture, [{ status: fixtureCase.status, body: fixtureCase.body }], { includeCompatibilityProbe: false });
         const run = await runRootCli(fixture, fixtureCase.args);
         assert.equal(run.code, 1);
         assert.equal(run.stdout, '');
         assert.equal(run.stderr, `admin: ${fixtureCase.code}\n`);
         assert.ok(!run.stderr.includes(DEFAULT_TOKEN));
+        assert.ok(!run.stderr.includes(ADMIN_TOKEN));
         assert.ok(!run.stderr.includes('RAW_MARKER'));
       });
     }
+  });
+
+  it('company:showは通常tokenではなく管理tokenを別Keychain serviceへ登録する', async () => {
+    await withCollectorFixture(async (fixture) => {
+      await writeFile(fixture.keychainPath, DEFAULT_TOKEN, 'utf8');
+      await writeApiSpec(fixture, [{ status: 200, body: companyResponse }], { includeCompatibilityProbe: false });
+      parseCollectorSuccess(await runRootCli(fixture, ['company:show'], { input: `${ADMIN_TOKEN}\n` }));
+      assert.equal(await adminKeychainToken(fixture), ADMIN_TOKEN);
+      assert.equal(await readFile(fixture.keychainPath, 'utf8'), DEFAULT_TOKEN);
+    });
   });
 });
