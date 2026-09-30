@@ -32,14 +32,14 @@ export interface KeychainTokenResult {
 
 // token未登録時だけ値なし末尾-wのpromptをsecurityへ委ねる。tokenはargvへ渡さない。
 // created=trueはこのrunで新規作成したitemであり、失敗時のrollback対象になる。
-function ensureServiceToken(env: NodeJS.ProcessEnv, service: string, account: string): KeychainTokenResult {
+function ensureServiceToken(env: NodeJS.ProcessEnv, service: string, account: string, promptLabel: string): KeychainTokenResult {
   const bin = securityBin(env);
   const existing = findKeychainToken(bin, service, account);
   if (existing !== null) {
     return { token: existing, created: false };
   }
   if (process.stderr.isTTY) {
-    process.stderr.write('Yori tokenを2回入力してください。\n');
+    process.stderr.write(`${promptLabel}を2回入力してください。\n`);
   }
   const added = spawnSync(bin, ['add-generic-password', '-U', '-a', account, '-s', service, '-w'], {
     stdio: 'inherit',
@@ -55,11 +55,11 @@ function ensureServiceToken(env: NodeJS.ProcessEnv, service: string, account: st
 }
 
 export function ensureKeychainToken(env: NodeJS.ProcessEnv, account: string): KeychainTokenResult {
-  return ensureServiceToken(env, COLLECTOR_KEYCHAIN_SERVICE, account);
+  return ensureServiceToken(env, COLLECTOR_KEYCHAIN_SERVICE, account, 'Yori token');
 }
 
 export function ensureAdminKeychainToken(env: NodeJS.ProcessEnv, account: string): KeychainTokenResult {
-  return ensureServiceToken(env, ADMIN_KEYCHAIN_SERVICE, account);
+  return ensureServiceToken(env, ADMIN_KEYCHAIN_SERVICE, account, 'Yori company admin token');
 }
 
 // このrunで作成したitemだけを削除する。既存itemへは呼出元が一切使わない。
