@@ -42,6 +42,7 @@ npx yori-cli collector:backfill --source deepseek_harness --dry-run
 - Codexは通常sessionsとarchived_sessionsの`source=cli` root threadだけを対象にし、`response_item`とsubagentを除外します。
 - Claude Codeはrepository完全一致のroot transcriptだけを対象にし、sidechain・meta・tool resultを除外します。
 - DeepSeek Harnessはversion 3・`delegationDepth=0`・非seeded sessionだけを対象にし、user本文とcompleted turn最後のassistant本文だけを扱います。reasoning・tool call・tool result・system messageは収集しません。
+- Cursorは公式hookによる今後の会話収集だけを対象とし、過去履歴のbackfillには対応しません。`--source cursor`は拒否し、Cursorの非公開DBや未検証transcriptを探索しません。
 - `--dry-run`はHTTP送信とcollector state更新を行いません。成功出力には本文、repository path、session IDを含めません。
 
 known secret（会話本文で完全一致させて伏せたい値）は`collector:secret:*`で管理します。
