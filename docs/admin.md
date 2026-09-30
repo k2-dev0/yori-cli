@@ -137,14 +137,14 @@ sudo docker compose -p yori --env-file /etc/yori/yori.env -f deployment/compose.
 ### `token:issue <file.json>`
 
 ```json
-{ "company_id": "<uuid>", "employee_id": "<uuid>" }
+{ "company_id": "<uuid>", "employee_id": "<uuid>", "scope": "company_admin" }
 ```
 
 ```json
-{"status":"created","token_id":"<uuid>","employee_id":"<uuid>","token":"yori_<secret>"}
+{"status":"created","token_id":"<uuid>","employee_id":"<uuid>","scope":"company_admin","token":"yori_<secret>"}
 ```
 
-同じ社員が複数の未失効tokenを持てる。token hashの一意衝突は新しいtokenで最大5回まで再生成し、それでも衝突する場合は `internal_error`（他のDB障害は再生成しない）。
+`scope`は`employee`または`company_admin`で、省略時は`employee`。最初の`company_admin` tokenは、DBへ接続できる管理環境でこのコマンドを使って発行する。以後はcompany admin tokenを使うHTTPS API版`token:issue <employee-id> --scope ...`で発行できる。同じ社員が複数の未失効tokenを持てる。token hashの一意衝突は新しいtokenで最大5回まで再生成し、それでも衝突する場合は `internal_error`（他のDB障害は再生成しない）。
 
 ### `token:revoke <file.json>`
 
