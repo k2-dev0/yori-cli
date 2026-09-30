@@ -88,6 +88,11 @@ function assertRemoteReferencesExist(stdin: string): void {
 // tools profileのmigrate serviceをnpxで上書きする1回だけのcompose runを検査する。
 function assertComposeContract(stdin: string): void {
   assert.ok(stdin.includes('cd /srv/yori'), `cd /srv/yoriがない: ${JSON.stringify(stdin)}`);
+  const cdIndex = stdin.indexOf('cd /srv/yori');
+  const releaseShaIndex = stdin.indexOf('export YORI_RELEASE_SHA="$(git rev-parse --verify \'HEAD^{commit}\')"');
+  const composeIndex = stdin.indexOf('sudo docker compose');
+  assert.ok(releaseShaIndex > cdIndex, `repository移動後のYORI_RELEASE_SHA解決がない: ${JSON.stringify(stdin)}`);
+  assert.ok(composeIndex > releaseShaIndex, `YORI_RELEASE_SHA解決前にcomposeを起動している: ${JSON.stringify(stdin)}`);
   assert.ok(stdin.includes('/etc/yori/yori.env'), `env fileがない: ${JSON.stringify(stdin)}`);
   assert.ok(stdin.includes('deployment/compose.yaml'), `deployment/compose.yamlがない: ${JSON.stringify(stdin)}`);
   assert.ok(!stdin.includes('compose.npx.yaml'), '旧compose.npx.yamlを使っている');
