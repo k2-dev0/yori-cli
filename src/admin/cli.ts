@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { createPool } from '../db/pool.js';
 import { inspectCompanyOverSsh, listRedactionPolicyOverSsh, replaceRedactionPolicyOverSsh } from './ssh-transport.js';
 import { runCollectorCommand } from '../collector/commands.js';
+import { addProjectMemberViaApi, registerCurrentProject } from '../collector/projects.js';
 import {
   bootstrapInputSchema,
   companyCreateInputSchema,
@@ -167,6 +168,27 @@ async function runInspect(env: NodeJS.ProcessEnv, rest: string[]): Promise<numbe
   }
 }
 
+async function runProjectAdd(env: NodeJS.ProcessEnv, rest: string[]): Promise<number> {
+  if (rest.length !== 0) {
+    return fail('invalid_arguments');
+  }
+  const result = await registerCurrentProject(env, process.cwd());
+  return result.ok ? succeed(result.value) : fail(result.code);
+}
+
+async function runProjectMemberAdd(env: NodeJS.ProcessEnv, rest: string[]): Promise<number> {
+  if (rest.length !== 2) {
+    return fail('invalid_arguments');
+  }
+  const projectId = z.uuid().safeParse(rest[0]);
+  const employeeId = z.uuid().safeParse(rest[1]);
+  if (!projectId.success || !employeeId.success) {
+    return fail('invalid_arguments');
+  }
+  const result = await addProjectMemberViaApi(env, projectId.data.toLowerCase(), employeeId.data.toLowerCase());
+  return result.ok ? succeed(result.value) : fail(result.code);
+}
+
 // 管理CLIの入口。argvのcommandだけを解釈し、入力はJSON fileから受ける。
 export async function runCli(argv: string[], env: NodeJS.ProcessEnv = process.env): Promise<number> {
   try {
@@ -180,6 +202,10 @@ export async function runCli(argv: string[], env: NodeJS.ProcessEnv = process.en
         return await runInputCommand(env, employeeCreateInputSchema, rest, (pool, input) => createEmployee(pool, input));
       case 'project:create':
         return await runInputCommand(env, projectCreateInputSchema, rest, (pool, input) => createProject(pool, input));
+      case 'project:add':
+        return await runProjectAdd(env, rest);
+      case 'project:member:add':
+        return await runProjectMemberAdd(env, rest);
       case 'member:add':
         return await runInputCommand(env, memberInputSchema, rest, (pool, input) => addMember(pool, input));
       case 'member:remove':
