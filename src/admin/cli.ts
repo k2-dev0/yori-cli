@@ -4,6 +4,7 @@ import { pathToFileURL } from 'node:url';
 import type { Pool } from 'pg';
 import { z } from 'zod';
 import { createPool } from '../db/pool.js';
+import { issueTokenViaApi, loadCompanyViaApi, loadMeViaApi, revokeTokenViaApi } from '../collector/account.js';
 import { inspectCompanyOverSsh, listRedactionPolicyOverSsh, replaceRedactionPolicyOverSsh } from './ssh-transport.js';
 import { runCollectorCommand } from '../collector/commands.js';
 import { registerCurrentProject } from '../collector/projects.js';
@@ -176,6 +177,30 @@ async function runProjectAdd(env: NodeJS.ProcessEnv, rest: string[]): Promise<nu
   return result.ok ? succeed(result.value) : fail(result.code);
 }
 
+async function runAccountCommand(env: NodeJS.ProcessEnv, command: 'me' | 'company:show', rest: string[]): Promise<number> {
+  if (rest.length !== 0) return fail('invalid_arguments');
+  const result = command === 'me' ? await loadMeViaApi(env) : await loadCompanyViaApi(env);
+  return result.ok ? succeed(result.value) : fail(result.code);
+}
+
+async function runTokenIssueApi(env: NodeJS.ProcessEnv, rest: string[]): Promise<number | null> {
+  if (rest.length === 1) return null;
+  if (rest.length !== 3 || rest[1] !== '--scope') return fail('invalid_arguments');
+  const employeeId = z.uuid().safeParse(rest[0]);
+  const scope = z.enum(['employee', 'company_admin']).safeParse(rest[2]);
+  if (!employeeId.success || !scope.success) return fail('invalid_arguments');
+  const result = await issueTokenViaApi(env, employeeId.data.toLowerCase(), scope.data);
+  return result.ok ? succeed(result.value) : fail(result.code);
+}
+
+async function runTokenRevokeApi(env: NodeJS.ProcessEnv, rest: string[]): Promise<number | null> {
+  if (rest.length !== 1) return fail('invalid_arguments');
+  const tokenId = z.uuid().safeParse(rest[0]);
+  if (!tokenId.success) return rest[0].endsWith('.json') ? null : fail('invalid_arguments');
+  const result = await revokeTokenViaApi(env, tokenId.data.toLowerCase());
+  return result.ok ? succeed(result.value) : fail(result.code);
+}
+
 // 管理CLIの入口。argvのcommandだけを解釈し、入力はJSON fileから受ける。
 export async function runCli(argv: string[], env: NodeJS.ProcessEnv = process.env): Promise<number> {
   try {
@@ -191,14 +216,19 @@ export async function runCli(argv: string[], env: NodeJS.ProcessEnv = process.en
         return await runInputCommand(env, projectCreateInputSchema, rest, (pool, input) => createProject(pool, input));
       case 'project:add':
         return await runProjectAdd(env, rest);
+      case 'me':
+      case 'company:show':
+        return await runAccountCommand(env, command, rest);
       case 'member:add':
         return await runInputCommand(env, memberInputSchema, rest, (pool, input) => addMember(pool, input));
       case 'member:remove':
         return await runInputCommand(env, memberInputSchema, rest, (pool, input) => removeMember(pool, input));
       case 'token:issue':
-        return await runInputCommand(env, tokenIssueInputSchema, rest, (pool, input) => issueToken(pool, input));
+        return (await runTokenIssueApi(env, rest)) ??
+          (await runInputCommand(env, tokenIssueInputSchema, rest, (pool, input) => issueToken(pool, input)));
       case 'token:revoke':
-        return await runInputCommand(env, tokenRevokeInputSchema, rest, (pool, input) => revokeToken(pool, input));
+        return (await runTokenRevokeApi(env, rest)) ??
+          (await runInputCommand(env, tokenRevokeInputSchema, rest, (pool, input) => revokeToken(pool, input)));
       case 'redaction:replace':
         return await runReplaceRedaction(env, rest);
       case 'redaction:list':
