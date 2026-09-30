@@ -90,6 +90,7 @@ DATABASE_URL='<database-url>' npm run --silent yori -- <command> [argument]
 | `project:create <file.json>` | 指定した会社に案件を登録する |
 | `project:add` | cwdのrepositoryを社員tokenの会社へ登録する（JSON・`DATABASE_URL`不要） |
 | `member:add <display-name>` | company admin tokenで会社へ社員を追加する（JSON・`DATABASE_URL`不要） |
+| `employee:add <display-name>` | `member:add`の互換alias |
 | `member:add <file.json>` | 旧DB管理用。案件に社員を追加する |
 | `member:remove <file.json>` | 案件から社員を外す |
 | `token:issue <file.json>` | 指定した社員の認証トークンを発行する |
