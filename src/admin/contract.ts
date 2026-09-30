@@ -7,6 +7,7 @@ export const ADMIN_ERROR_CODES = [
   'invalid_admin_config',
   'invalid_input_file',
   'invalid_input',
+  'last_company_admin',
   'bootstrap_already_completed',
   'company_not_found',
   'employee_not_found',
