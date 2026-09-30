@@ -193,8 +193,7 @@ async function runTokenIssueApi(env: NodeJS.ProcessEnv, rest: string[]): Promise
   return result.ok ? succeed(result.value) : fail(result.code);
 }
 
-async function runMemberAddApi(env: NodeJS.ProcessEnv, rest: string[]): Promise<number | null> {
-  if (rest.length === 1 && rest[0].endsWith('.json')) return null;
+async function runEmployeeAddApi(env: NodeJS.ProcessEnv, rest: string[]): Promise<number> {
   if (rest.length !== 1) return fail('invalid_arguments');
   const displayName = employeeCreateInputSchema.shape.display_name.safeParse(rest[0]);
   if (!displayName.success) return fail('invalid_arguments');
@@ -229,10 +228,9 @@ export async function runCli(argv: string[], env: NodeJS.ProcessEnv = process.en
       case 'company:show':
         return await runAccountCommand(env, command, rest);
       case 'member:add':
-        return (await runMemberAddApi(env, rest)) ??
-          (await runInputCommand(env, memberInputSchema, rest, (pool, input) => addMember(pool, input)));
+        return await runInputCommand(env, memberInputSchema, rest, (pool, input) => addMember(pool, input));
       case 'employee:add':
-        return (await runMemberAddApi(env, rest)) ?? fail('invalid_arguments');
+        return await runEmployeeAddApi(env, rest);
       case 'member:remove':
         return await runInputCommand(env, memberInputSchema, rest, (pool, input) => removeMember(pool, input));
       case 'token:issue':
