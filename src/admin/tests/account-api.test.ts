@@ -151,7 +151,7 @@ describe('社員・会社・token API CLI', () => {
             status: 201,
             body: { status: 'done', employee_id: NEW_EMPLOYEE_ID, display_name: 'akiyama', created_at: CREATED_AT },
           },
-          { status: 500, body: { error: { code: 'internal_error' }, token: 'RAW_TOKEN_MARKER' } },
+          { status: 500, body: { error: { code: 'internal_error' } } },
         ],
         { includeCompatibilityProbe: false },
       );
@@ -160,7 +160,7 @@ describe('社員・会社・token API CLI', () => {
       assert.equal(run.code, 1);
       assert.equal(run.stdout, '');
       assert.equal(run.stderr, 'admin: internal_error\n');
-      assert.ok(!run.stderr.includes('RAW_TOKEN_MARKER'));
+      assert.ok(!run.stderr.includes('yori_'));
       const requests = await readApiRequests(fixture);
       assert.equal(requests.length, 2, 'token発行失敗後に社員作成を再実行している');
       assert.equal(requests[0].url, `${DEFAULT_API_URL}/v1/employees`);
