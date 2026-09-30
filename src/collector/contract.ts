@@ -3,6 +3,7 @@ import type { AdminErrorCode } from '../admin/contract.js';
 // collector install/updateの端末側レイアウトとAPI契約。yori本体のcollector設定と用語を揃える。
 export const COLLECTOR_API_DEFAULT_URL = 'https://yori-pilot.online';
 export const COLLECTOR_KEYCHAIN_SERVICE = 'online.yori.collector';
+export const ADMIN_KEYCHAIN_SERVICE = 'online.yori.admin';
 // known secretはlabel別のKeychain itemとして保持し、indexにはlabelだけを置く。
 // 値の境界はyori src/api/contract.ts:17-20・src/collector/known-secrets.tsと同じ。
 export const COLLECTOR_SECRET_KEYCHAIN_SERVICE = 'online.yori.collector.secret';
