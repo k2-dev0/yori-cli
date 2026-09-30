@@ -7,6 +7,7 @@
 対象repositoryのrootで、引数なしで実行します。
 
 ```sh
+npx yori-cli project:add
 npx yori-cli collector:install
 ```
 
@@ -16,6 +17,8 @@ npx yori-cli collector:install
 - `~/.codex`が存在すれば、`hooks.json`が未作成または0バイトでも安全な空objectから作成・修復します。Claude Codeは既存`~/.claude/settings.json`を対象にし、`UserPromptSubmit`へ同期notifyと非同期notify-late、`Stop`へ同期collectを追加します。notifyは現在入力を最大3秒待ち、未完了結果はnotify-lateまたは次回入力で一度だけ配信します。どちらも検出できない場合は`agent_not_found`で終了します。
 - hookは固定のlocal artifact（`~/.local/share/yori/collector/versions/<version>/`）をstable launcher経由で呼び、npxやlatestへ依存しません。manifestとinstall stateはcollector version・Git SHA・SHA-256 checksumを保持し、同一versionで識別情報が違うartifactは拒否します。
 - 設定は`~/.yori-collector.json`、stateは`~/.yori-collector`、token環境変数は`YORI_COLLECTOR_TOKEN`。
+- `project:add`はcwdのGit remoteを社員tokenの会社へ登録し、新規は`done`、登録済みは`already`を返します。project memberは自動追加しません。
+- company admin tokenを持つ管理者は`project:member:add <project-id> <employee-id>`でmemberを冪等追加できます。新規は`done`、追加済みは`already`です。
 
 継続運用:
 
@@ -85,7 +88,9 @@ DATABASE_URL='<database-url>' npm run --silent yori -- <command> [argument]
 | `company:create <file.json>` | 会社を登録する |
 | `employee:create <file.json>` | 指定した会社に社員を登録する |
 | `project:create <file.json>` | 指定した会社に案件を登録する |
+| `project:add` | cwdのrepositoryを社員tokenの会社へ登録する（JSON・`DATABASE_URL`不要） |
 | `member:add <file.json>` | 案件に社員を追加する |
+| `project:member:add <project-id> <employee-id>` | company admin tokenでmemberを追加する（JSON・`DATABASE_URL`不要） |
 | `member:remove <file.json>` | 案件から社員を外す |
 | `token:issue <file.json>` | 指定した社員の認証トークンを発行する |
 | `token:revoke <file.json>` | 認証トークンを失効させる |
