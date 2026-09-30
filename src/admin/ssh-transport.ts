@@ -24,6 +24,7 @@ const REMOTE_COMPOSE_FILE = 'deployment/compose.yaml';
 // remote composeにcli serviceは無い。tools profileのmigrate serviceを一時Node環境として借りる。
 const REMOTE_SERVICE = 'migrate';
 const REMOTE_INPUT_PATH = '/input/redaction.json';
+const REMOTE_RELEASE_SHA = 'export YORI_RELEASE_SHA="$(git rev-parse --verify \'HEAD^{commit}\')"';
 
 // remoteの成功応答はunknown key・欠落key・型違いを拒否し、契約外JSONをそのまま返さない。
 const replaceOutputSchema = z.strictObject({
@@ -97,6 +98,7 @@ function replaceScript(version: string, input: RedactionReplaceInput): string {
     'set -eu',
 
     `cd ${REMOTE_DIR}`,
+    REMOTE_RELEASE_SHA,
     'input=$(mktemp)',
     'trap \'rm -f "$input"\' EXIT',
     'chmod 600 "$input"',
@@ -110,12 +112,12 @@ function replaceScript(version: string, input: RedactionReplaceInput): string {
 
 // listは会社UUIDだけを固定versionのCLIへ渡す。
 function listScript(version: string, companyId: string): string {
-  return ['set -eu', `cd ${REMOTE_DIR}`, remoteCliInvocation(version, [], ['redaction:list', companyId]), ''].join('\n');
+  return ['set -eu', `cd ${REMOTE_DIR}`, REMOTE_RELEASE_SHA, remoteCliInvocation(version, [], ['redaction:list', companyId]), ''].join('\n');
 }
 
 // inspectは会社UUIDだけを固定versionのCLIへ渡す。
 function inspectScript(version: string, companyId: string): string {
-  return ['set -eu', `cd ${REMOTE_DIR}`, remoteCliInvocation(version, [], ['inspect', companyId]), ''].join('\n');
+  return ['set -eu', `cd ${REMOTE_DIR}`, REMOTE_RELEASE_SHA, remoteCliInvocation(version, [], ['inspect', companyId]), ''].join('\n');
 }
 
 interface SshResult {
