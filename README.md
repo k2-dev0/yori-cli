@@ -23,7 +23,26 @@ npx yori-cli collector:install
 |---|---|
 | `npx yori-cli collector:update` | 配布artifactをchecksum検証してから切り替え、旧versionを残す。Keychainとstateは変更しない |
 | `npx yori-cli collector:doctor` | 秘密を含まない診断（install状態、Keychain、setup APIのcurrent policy version、権限）を表示し、状態を変更しない |
+| `npx yori-cli collector:backfill [--dry-run] [--source codex\|claude_code\|deepseek_harness]` | 起動時のrepositoryから過去のroot会話を自動発見する。dry-runは本文・pathを出さず件数とversionだけを表示する |
 | `npx yori-cli collector:uninstall` | 追加したhook・config・install rootだけを削除する。Keychainと`~/.yori-collector`は保持し、再installでpromptは出ない |
+
+過去履歴は対象repositoryのrootで実行します。repository pathの引数は不要です。
+
+```sh
+# Codex・Claude Code・DeepSeek Harnessの対象件数だけを確認する
+npx yori-cli collector:backfill --dry-run
+
+# 確認後に既存の伏せ字・policy・revision・冪等送信を使って登録する
+npx yori-cli collector:backfill
+
+# 1 sourceだけを対象にする
+npx yori-cli collector:backfill --source deepseek_harness --dry-run
+```
+
+- Codexは通常sessionsとarchived_sessionsの`source=cli` root threadだけを対象にし、`response_item`とsubagentを除外します。
+- Claude Codeはrepository完全一致のroot transcriptだけを対象にし、sidechain・meta・tool resultを除外します。
+- DeepSeek Harnessはversion 3・`delegationDepth=0`・非seeded sessionだけを対象にし、user本文とcompleted turn最後のassistant本文だけを扱います。reasoning・tool call・tool result・system messageは収集しません。
+- `--dry-run`はHTTP送信とcollector state更新を行いません。成功出力には本文、repository path、session IDを含めません。
 
 known secret（会話本文で完全一致させて伏せたい値）は`collector:secret:*`で管理します。
 
@@ -77,6 +96,7 @@ DATABASE_URL='<database-url>' npm run --silent yori -- <command> [argument]
 | `collector:install` | 社員端末へcollectorを導入する（`DATABASE_URL`不要） |
 | `collector:update` | collector artifactを検証して切り替える（`DATABASE_URL`不要） |
 | `collector:doctor` | collector導入状態を秘密なしで診断する（`DATABASE_URL`不要） |
+| `collector:backfill [--dry-run] [--source codex\|claude_code\|deepseek_harness]` | cwdのrepositoryから過去のroot会話を回収する（`DATABASE_URL`不要） |
 | `collector:uninstall` | collectorの所有entry・config・install rootを削除する（`DATABASE_URL`不要） |
 | `collector:secret:add <label>` | known secretをKeychainへ保存する（`--from-env <ENV_NAME>`、`DATABASE_URL`不要） |
 | `collector:secret:list` | known secretのlabelだけを昇順で表示する（`DATABASE_URL`不要） |
