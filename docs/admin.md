@@ -122,17 +122,21 @@ sudo docker compose -p yori --env-file /etc/yori/yori.env -f deployment/compose.
 
 同じ会社で同じcanonical identifierの案件が既にある場合は `repository_conflict`。既存案件は変更しない。
 
-### `employee:add <display-name>`
+### `employee:add <display-name> [--issue-token]`
 
 ```text
 employee:add "akiyama"
+
+employee:add "akiyama" --issue-token
 ```
 
 ```json
 {"status":"done","employee_id":"<uuid>","display_name":"akiyama","created_at":"2026-09-30T00:00:00.000Z"}
+
+{"status":"done","employee_id":"<uuid>","display_name":"akiyama","token_id":"<uuid>","scope":"employee","token":"yori_<secret>"}
 ```
 
-company admin tokenで`POST /v1/employees`を呼び、認証tokenの会社へ社員を作成する。会社IDは引数やrequest bodyから受けない。社員tokenは自動発行せず、続けて`token:issue <employee-id> --scope employee`を実行する。会社内の全社員が会社projectを共通利用するため、project所属の追加は不要。
+company admin tokenで`POST /v1/employees`を呼び、認証tokenの会社へ社員を作成する。会社IDは引数やrequest bodyから受けない。`--issue-token`指定時だけ、作成したemployee IDへ既存のtoken発行APIをemployee scopeで続けて呼び、生tokenを成功出力へ一度だけ含める。token発行だけが失敗した場合は社員が残るため、`company:show`でemployee IDを確認して`token:issue <employee-id> --scope employee`を再実行する。会社内の全社員が会社projectを共通利用するため、project所属の追加は不要。
 
 ### `member:add` / `member:remove <file.json>`
 
