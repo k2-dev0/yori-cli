@@ -6,6 +6,7 @@ import { COLLECTOR_BUNDLE_FILE_NAME, COLLECTOR_MANIFEST_FILE_NAME, CollectorFail
 
 export interface CollectorArtifact {
   version: string;
+  gitSha: string;
   checksum: string;
   // bundleは配置先へそのままcopyし、manifestも検証済み本文をそのまま置く。
   bundle: Buffer;
@@ -31,7 +32,7 @@ function artifactDir(env: NodeJS.ProcessEnv): string {
   return override !== undefined && override.length > 0 ? override : defaultArtifactDir();
 }
 
-// artifact本文とmanifestのversion・checksumを検証する。不一致は配置前に拒否する。
+// artifact本文とmanifestのversion・Git SHA・checksumを検証する。不一致は配置前に拒否する。
 export async function readCollectorArtifact(env: NodeJS.ProcessEnv): Promise<CollectorArtifact> {
   const dir = artifactDir(env);
   let bundle: Buffer;
@@ -53,11 +54,13 @@ export async function readCollectorArtifact(env: NodeJS.ProcessEnv): Promise<Col
   if (typeof manifest !== 'object' || manifest === null || Array.isArray(manifest)) {
     throw new CollectorFailure('collector_artifact_invalid');
   }
-  const candidate = manifest as { version?: unknown; file?: unknown; checksum?: unknown };
+  const candidate = manifest as { version?: unknown; file?: unknown; git_sha?: unknown; checksum?: unknown };
   if (
     typeof candidate.version !== 'string' ||
     !/^[A-Za-z0-9][A-Za-z0-9._+-]*$/.test(candidate.version) ||
     candidate.file !== COLLECTOR_BUNDLE_FILE_NAME ||
+    typeof candidate.git_sha !== 'string' ||
+    !/^[0-9a-f]{40}$/.test(candidate.git_sha) ||
     typeof candidate.checksum !== 'string' ||
     !/^[0-9a-f]{64}$/i.test(candidate.checksum)
   ) {
@@ -67,5 +70,5 @@ export async function readCollectorArtifact(env: NodeJS.ProcessEnv): Promise<Col
   if (checksum !== candidate.checksum.toLowerCase()) {
     throw new CollectorFailure('collector_artifact_invalid');
   }
-  return { version: candidate.version, checksum, bundle, manifest: Buffer.from(manifestText, 'utf8') };
+  return { version: candidate.version, gitSha: candidate.git_sha, checksum, bundle, manifest: Buffer.from(manifestText, 'utf8') };
 }
