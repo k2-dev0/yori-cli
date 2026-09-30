@@ -4,7 +4,7 @@ import { pathToFileURL } from 'node:url';
 import type { Pool } from 'pg';
 import { z } from 'zod';
 import { createPool } from '../db/pool.js';
-import { issueTokenViaApi, loadCompanyViaApi, loadMeViaApi, revokeTokenViaApi } from '../collector/account.js';
+import { createMemberViaApi, issueTokenViaApi, loadCompanyViaApi, loadMeViaApi, revokeTokenViaApi } from '../collector/account.js';
 import { inspectCompanyOverSsh, listRedactionPolicyOverSsh, replaceRedactionPolicyOverSsh } from './ssh-transport.js';
 import { runCollectorCommand } from '../collector/commands.js';
 import { registerCurrentProject } from '../collector/projects.js';
@@ -193,6 +193,15 @@ async function runTokenIssueApi(env: NodeJS.ProcessEnv, rest: string[]): Promise
   return result.ok ? succeed(result.value) : fail(result.code);
 }
 
+async function runMemberAddApi(env: NodeJS.ProcessEnv, rest: string[]): Promise<number | null> {
+  if (rest.length === 1 && rest[0].endsWith('.json')) return null;
+  if (rest.length !== 1) return fail('invalid_arguments');
+  const displayName = employeeCreateInputSchema.shape.display_name.safeParse(rest[0]);
+  if (!displayName.success) return fail('invalid_arguments');
+  const result = await createMemberViaApi(env, displayName.data);
+  return result.ok ? succeed(result.value) : fail(result.code);
+}
+
 async function runTokenRevokeApi(env: NodeJS.ProcessEnv, rest: string[]): Promise<number | null> {
   if (rest.length !== 1) return fail('invalid_arguments');
   const tokenId = z.uuid().safeParse(rest[0]);
@@ -220,7 +229,8 @@ export async function runCli(argv: string[], env: NodeJS.ProcessEnv = process.en
       case 'company:show':
         return await runAccountCommand(env, command, rest);
       case 'member:add':
-        return await runInputCommand(env, memberInputSchema, rest, (pool, input) => addMember(pool, input));
+        return (await runMemberAddApi(env, rest)) ??
+          (await runInputCommand(env, memberInputSchema, rest, (pool, input) => addMember(pool, input)));
       case 'member:remove':
         return await runInputCommand(env, memberInputSchema, rest, (pool, input) => removeMember(pool, input));
       case 'token:issue':
