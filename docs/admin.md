@@ -22,6 +22,8 @@ npx --yes --package=yori-cli@<reviewed-version> yori inspect <company-uuid>
 
 `collector:install` / `collector:update` / `collector:doctor` / `collector:backfill` / `collector:uninstall` / `collector:secret:*` はDBを使わず、`DATABASE_URL` を要求しない。macOS専用で、他platformでは `unsupported_platform` で端末を変更せずに終了する。導入手順と保持するfileは [README](../README.md) を参照。
 
+`project:add`と`project:member:add`もDBへ直接接続せず、KeychainのYori tokenでHTTPS APIを呼ぶ。`project:add`はcwdのcanonical repositoryを登録し、`project:member:add <project-id> <employee-id>`はcompany admin tokenだけを受理する。どちらも新規は`done`、登録済みは`already`として終了コード0を返す。
+
 ### リポジトリ内（開発時）
 
 ```sh
