@@ -10,6 +10,7 @@ export const ADMIN_ERROR_CODES = [
   'bootstrap_already_completed',
   'company_not_found',
   'employee_not_found',
+  'forbidden',
   'project_not_found',
   'token_not_found',
   'company_scope_mismatch',
