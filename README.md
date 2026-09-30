@@ -18,6 +18,7 @@ npx yori-cli collector:install
 - hookは固定のlocal artifact（`~/.local/share/yori/collector/versions/<version>/`）をstable launcher経由で呼び、npxやlatestへ依存しません。manifestとinstall stateはcollector version・Git SHA・SHA-256 checksumを保持し、同一versionで識別情報が違うartifactは拒否します。
 - 設定は`~/.yori-collector.json`、stateは`~/.yori-collector`、token環境変数は`YORI_COLLECTOR_TOKEN`。
 - `project:add`はcwdのGit remoteを社員tokenの会社へ登録し、新規は`done`、登録済みは`already`を返します。同じ会社の社員は登録済みprojectを共通利用します。
+- `me`は通常tokenで本人・会社・現在token・会社projectを表示します。`company:show`とAPI版token管理は別Keychain service `online.yori.admin`のcompany admin tokenを使い、通常collector tokenを上書きしません。
 
 継続運用:
 
@@ -73,7 +74,7 @@ DATABASE_URL='<database-url>' npm run --silent yori -- <command> [argument]
 
 ## 入出力
 
-- `bootstrap` から `token:revoke` までは、入力をJSONファイルで渡します。
+- DB直結の従来管理コマンドは入力をJSONファイルで渡します。社員向けHTTPS APIコマンドはJSONファイルを要求しません。
 - `inspect` は会社IDを引数で渡します。
 - `inspect`・`redaction:list`・`redaction:replace`は`DATABASE_URL`未設定時にSSH alias `yori-production`経由で実行できます。
 - 成功時はstdoutへ1行のJSONを出力し、終了コード `0` で終了します。
@@ -91,7 +92,11 @@ DATABASE_URL='<database-url>' npm run --silent yori -- <command> [argument]
 | `member:add <file.json>` | 案件に社員を追加する |
 | `member:remove <file.json>` | 案件から社員を外す |
 | `token:issue <file.json>` | 指定した社員の認証トークンを発行する |
+| `token:issue <employee-id> --scope employee\|company_admin` | company admin tokenで社員tokenを発行する。生tokenは成功時に一度だけ表示する |
 | `token:revoke <file.json>` | 認証トークンを失効させる |
+| `token:revoke <token-id>` | company admin tokenでtokenを失効する |
+| `me` | 本人・会社・現在token metadata・会社projectを表示する |
+| `company:show` | company admin tokenで会社・社員・project・token metadataを表示する |
 | `inspect <company-uuid>` | 指定した会社の社員、案件、案件メンバー、認証トークンを表示する |
 | `redaction:replace <file.json>` | 会社のcustom伏せ字fields/terms policyを置換する（詳細は[docs/admin.md](docs/admin.md)） |
 | `redaction:list <company-uuid>` | 会社のcustom伏せ字fields/terms policyを表示する（詳細は[docs/admin.md](docs/admin.md)） |
