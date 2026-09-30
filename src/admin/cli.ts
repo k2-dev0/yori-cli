@@ -4,7 +4,7 @@ import { pathToFileURL } from 'node:url';
 import type { Pool } from 'pg';
 import { z } from 'zod';
 import { createPool } from '../db/pool.js';
-import { listRedactionPolicyOverSsh, replaceRedactionPolicyOverSsh } from './ssh-transport.js';
+import { inspectCompanyOverSsh, listRedactionPolicyOverSsh, replaceRedactionPolicyOverSsh } from './ssh-transport.js';
 import { runCollectorCommand } from '../collector/commands.js';
 import {
   bootstrapInputSchema,
@@ -155,7 +155,8 @@ async function runInspect(env: NodeJS.ProcessEnv, rest: string[]): Promise<numbe
   }
   const url = databaseUrl(env);
   if (url === null) {
-    return fail('invalid_admin_config');
+    const result = await inspectCompanyOverSsh(env, parsed.data.toLowerCase());
+    return result.ok ? succeed(result.value) : fail(result.code);
   }
   const pool = createPool(url);
   try {
