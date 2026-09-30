@@ -4,7 +4,14 @@ import { pathToFileURL } from 'node:url';
 import type { Pool } from 'pg';
 import { z } from 'zod';
 import { createPool } from '../db/pool.js';
-import { createMemberViaApi, issueTokenViaApi, loadCompanyViaApi, loadMeViaApi, revokeTokenViaApi } from '../collector/account.js';
+import {
+  createMemberViaApi,
+  createMemberWithTokenViaApi,
+  issueTokenViaApi,
+  loadCompanyViaApi,
+  loadMeViaApi,
+  revokeTokenViaApi,
+} from '../collector/account.js';
 import { inspectCompanyOverSsh, listRedactionPolicyOverSsh, replaceRedactionPolicyOverSsh } from './ssh-transport.js';
 import { runCollectorCommand } from '../collector/commands.js';
 import { registerCurrentProject } from '../collector/projects.js';
@@ -194,10 +201,13 @@ async function runTokenIssueApi(env: NodeJS.ProcessEnv, rest: string[]): Promise
 }
 
 async function runEmployeeAddApi(env: NodeJS.ProcessEnv, rest: string[]): Promise<number> {
-  if (rest.length !== 1) return fail('invalid_arguments');
+  const issueToken = rest.length === 2 && rest[1] === '--issue-token';
+  if (rest.length !== 1 && !issueToken) return fail('invalid_arguments');
   const displayName = employeeCreateInputSchema.shape.display_name.safeParse(rest[0]);
   if (!displayName.success) return fail('invalid_arguments');
-  const result = await createMemberViaApi(env, displayName.data);
+  const result = issueToken
+    ? await createMemberWithTokenViaApi(env, displayName.data)
+    : await createMemberViaApi(env, displayName.data);
   return result.ok ? succeed(result.value) : fail(result.code);
 }
 
