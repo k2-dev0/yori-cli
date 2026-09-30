@@ -117,9 +117,10 @@ describe('collector build copy', () => {
     const yoriRepository = await mkdtemp(path.join(tmpdir(), 'yori-repository-version-fixture-'));
     try {
       await withDistBackup(async () => {
+        const packageJson = JSON.parse(await readFile(path.join(REPO_ROOT, 'package.json'), 'utf8')) as { version: string };
         for (const artifact of [
           { version: '0.0.0', content: 'console.log("bad-version");\n' },
-          { version: '0.1.2', content: 'console.log("bad-sha");\n', gitSha: 'not-a-sha' },
+          { version: packageJson.version, content: 'console.log("bad-sha");\n', gitSha: 'not-a-sha' },
         ]) {
           await writeArtifact(yoriRepository, artifact);
           const result = runBuild(yoriRepository);
