@@ -100,7 +100,11 @@ describe('社員向けproject API CLI', () => {
       { status: 403, body: { error: { code: 'forbidden' } }, code: 'forbidden' },
       { status: 404, body: { error: { code: 'not_found' } }, code: 'project_not_found' },
       { status: 409, body: { error: { code: 'repository_conflict' } }, code: 'repository_conflict' },
-      { status: 500, body: { error: { code: 'internal_error' }, marker: 'RAW_MARKER' }, code: 'internal_error' },
+      {
+        status: 500,
+        body: { error: { code: 'internal_error' }, marker: 'RAW_MARKER' },
+        code: 'collector_server_incompatible',
+      },
     ]) {
       await withCollectorFixture(async (fixture) => {
         await writeFile(fixture.keychainPath, DEFAULT_TOKEN, 'utf8');
