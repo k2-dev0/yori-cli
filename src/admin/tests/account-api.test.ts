@@ -73,26 +73,28 @@ describe('社員・会社・token API CLI', () => {
     }
   });
 
-  it('member:addは表示名を管理APIへ送り、会社の社員を作成する', async () => {
-    await withCollectorFixture(async (fixture) => {
-      await writeFile(fixture.adminKeychainPath, ADMIN_TOKEN, 'utf8');
-      const created = {
-        status: 'done',
-        employee_id: NEW_EMPLOYEE_ID,
-        display_name: 'akiyama',
-        created_at: CREATED_AT,
-      };
-      await writeApiSpec(fixture, [{ status: 201, body: created }], { includeCompatibilityProbe: false });
+  it('member:addとemployee:addは表示名を管理APIへ送り、会社の社員を作成する', async () => {
+    for (const command of ['member:add', 'employee:add']) {
+      await withCollectorFixture(async (fixture) => {
+        await writeFile(fixture.adminKeychainPath, ADMIN_TOKEN, 'utf8');
+        const created = {
+          status: 'done',
+          employee_id: NEW_EMPLOYEE_ID,
+          display_name: 'akiyama',
+          created_at: CREATED_AT,
+        };
+        await writeApiSpec(fixture, [{ status: 201, body: created }], { includeCompatibilityProbe: false });
 
-      assert.deepEqual(parseCollectorSuccess(await runRootCli(fixture, ['member:add', 'akiyama'])), created);
+        assert.deepEqual(parseCollectorSuccess(await runRootCli(fixture, [command, 'akiyama'])), created);
 
-      const requests = await readApiRequests(fixture);
-      assert.equal(requests.length, 1);
-      assert.equal(requests[0].url, `${DEFAULT_API_URL}/v1/employees`);
-      assert.equal(requests[0].method, 'POST');
-      assert.equal(requests[0].authorization, `Bearer ${ADMIN_TOKEN}`);
-      assert.deepEqual(JSON.parse(String(requests[0].body)), { display_name: 'akiyama' });
-    });
+        const requests = await readApiRequests(fixture);
+        assert.equal(requests.length, 1);
+        assert.equal(requests[0].url, `${DEFAULT_API_URL}/v1/employees`);
+        assert.equal(requests[0].method, 'POST');
+        assert.equal(requests[0].authorization, `Bearer ${ADMIN_TOKEN}`);
+        assert.deepEqual(JSON.parse(String(requests[0].body)), { display_name: 'akiyama' });
+      });
+    }
   });
 
   it('token:revokeのUUID引数はAPI DELETEへ送り、done/alreadyを返す', async () => {
