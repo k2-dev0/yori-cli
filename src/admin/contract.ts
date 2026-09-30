@@ -139,7 +139,9 @@ export const MAX_BUSINESS_FIELD_CODE_POINTS = 128;
 export const MAX_BUSINESS_TERM_CODE_POINTS = 512;
 export const REDACTION_DETECTOR_VERSION = 'initial-v1';
 export const SUSPICION_MODES = ['observe', 'block'] as const;
+export const TOKEN_SCOPES = ['employee', 'company_admin'] as const;
 export type SuspicionMode = (typeof SUSPICION_MODES)[number];
+export type TokenScope = (typeof TOKEN_SCOPES)[number];
 export type DetectorVersion = typeof REDACTION_DETECTOR_VERSION;
 
 export const redactionReplaceInputSchema = z.strictObject({
@@ -160,7 +162,7 @@ export const companyCreateInputSchema = z.strictObject({ name: companyName });
 export const employeeCreateInputSchema = z.strictObject({ company_id: uuid, display_name: displayName });
 export const projectCreateInputSchema = z.strictObject({ company_id: uuid, repository });
 export const memberInputSchema = z.strictObject({ company_id: uuid, project_id: uuid, employee_id: uuid });
-export const tokenIssueInputSchema = z.strictObject({ company_id: uuid, employee_id: uuid });
+export const tokenIssueInputSchema = z.strictObject({ company_id: uuid, employee_id: uuid, scope: z.enum(TOKEN_SCOPES).default('employee') });
 export const tokenRevokeInputSchema = z.strictObject({ company_id: uuid, token_id: uuid });
 
 export type BootstrapInput = z.infer<typeof bootstrapInputSchema>;
@@ -260,6 +262,7 @@ export interface TokenIssueOutput {
   status: 'created';
   token_id: string;
   employee_id: string;
+  scope: TokenScope;
   token: string;
 }
 
