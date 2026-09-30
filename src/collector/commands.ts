@@ -75,6 +75,17 @@ function successOutput(status: string, version: string | null, agents: Collector
   return { status, version, agents, checks };
 }
 
+// 同一versionの識別情報が変わるartifactは、通常の再install/updateで上書きしない。
+function rejectConflictingSameVersion(installed: CollectorInstallState | null, artifact: { version: string; gitSha: string; checksum: string }): void {
+  if (
+    installed !== null &&
+    installed.collector_version === artifact.version &&
+    (installed.checksum !== artifact.checksum || (installed.git_sha !== null && installed.git_sha !== artifact.gitSha))
+  ) {
+    throw new CollectorFailure('collector_artifact_invalid');
+  }
+}
+
 async function snapshotFile(filePath: string): Promise<FileSnapshot | null> {
   let stats;
   try {
@@ -146,6 +157,8 @@ async function installCollector(env: NodeJS.ProcessEnv): Promise<CollectorComman
     throw new CollectorFailure('agent_not_found');
   }
   const artifact = await readCollectorArtifact(env);
+  const previousInstall = await readCollectorInstallState(collectorInstallStatePath(home));
+  rejectConflictingSameVersion(previousInstall, artifact);
   const launcherPath = collectorLauncherPath(home);
   const configPath = collectorConfigPath(home);
   const hookUpdates = await planCollectorHooks(home, agents, launcherPath, configPath, 'install');
@@ -174,6 +187,7 @@ async function installCollector(env: NodeJS.ProcessEnv): Promise<CollectorComman
     await writeCollectorInstallState(collectorInstallStatePath(home), {
       installer_version: installerVersion,
       collector_version: artifact.version,
+      git_sha: artifact.gitSha,
       checksum: artifact.checksum,
       policy_version: setup.policy_version,
     });
@@ -210,6 +224,7 @@ async function updateCollector(env: NodeJS.ProcessEnv): Promise<CollectorCommand
     throw new CollectorFailure('collector_not_installed');
   }
   const artifact = await readCollectorArtifact(env);
+  rejectConflictingSameVersion(installed, artifact);
   const installerVersion = await readInstallerVersion();
   const footprint = await captureInstallFootprint(home, artifact.version);
   try {
@@ -218,6 +233,7 @@ async function updateCollector(env: NodeJS.ProcessEnv): Promise<CollectorCommand
     await writeCollectorInstallState(collectorInstallStatePath(home), {
       installer_version: installerVersion,
       collector_version: artifact.version,
+      git_sha: artifact.gitSha,
       checksum: artifact.checksum,
       policy_version: installed.policy_version,
     });
@@ -303,8 +319,12 @@ async function doctorCollector(env: NodeJS.ProcessEnv): Promise<CollectorDoctorO
     ]);
     if (bundle !== null && manifestText !== null) {
       try {
-        const manifest = JSON.parse(manifestText) as { checksum?: unknown };
-        checks.artifact = manifest.checksum === createHash('sha256').update(bundle).digest('hex');
+        const manifest = JSON.parse(manifestText) as { version?: unknown; git_sha?: unknown; checksum?: unknown };
+        checks.artifact =
+          manifest.version === installed?.collector_version &&
+          manifest.git_sha === installed?.git_sha &&
+          manifest.checksum === installed?.checksum &&
+          manifest.checksum === createHash('sha256').update(bundle).digest('hex');
       } catch {
         checks.artifact = false;
       }
