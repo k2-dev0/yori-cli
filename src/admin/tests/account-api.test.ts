@@ -168,6 +168,26 @@ describe('社員・会社・token API CLI', () => {
     });
   });
 
+  it('employee:renameは社員UUIDと新しい表示名を管理APIへ送り、更新結果を返す', async () => {
+    await withCollectorFixture(async (fixture) => {
+      await writeFile(fixture.adminKeychainPath, ADMIN_TOKEN, 'utf8');
+      const renamed = { status: 'done', employee_id: EMPLOYEE_ID, display_name: 'Alicia' };
+      await writeApiSpec(fixture, [{ status: 200, body: renamed }], { includeCompatibilityProbe: false });
+
+      assert.deepEqual(
+        parseCollectorSuccess(await runRootCli(fixture, ['employee:rename', EMPLOYEE_ID.toUpperCase(), 'Alicia'])),
+        renamed,
+      );
+
+      const requests = await readApiRequests(fixture);
+      assert.equal(requests.length, 1);
+      assert.equal(requests[0].url, `${DEFAULT_API_URL}/v1/employees/${EMPLOYEE_ID}`);
+      assert.equal(requests[0].method, 'PATCH');
+      assert.equal(requests[0].authorization, `Bearer ${ADMIN_TOKEN}`);
+      assert.deepEqual(JSON.parse(String(requests[0].body)), { display_name: 'Alicia' });
+    });
+  });
+
   it('member:addの文字列引数を社員作成APIとして扱わない', async () => {
     await withCollectorFixture(async (fixture) => {
       const run = await runRootCli(fixture, ['member:add', 'akiyama']);
@@ -205,6 +225,10 @@ describe('社員・会社・token API CLI', () => {
       ['employee:add', 'akiyama', 'extra'],
       ['employee:add', 'akiyama', '--issue-token', 'extra'],
       ['employee:add', 'akiyama', '--scope', 'employee'],
+      ['employee:rename'],
+      ['employee:rename', 'not-a-uuid', 'Alicia'],
+      ['employee:rename', EMPLOYEE_ID, ''],
+      ['employee:rename', EMPLOYEE_ID, 'Alicia', 'extra'],
       ['token:issue', 'not-a-uuid', '--scope', 'employee'],
       ['token:issue', EMPLOYEE_ID, '--scope', 'owner'],
       ['token:issue', EMPLOYEE_ID, 'employee'],
@@ -226,6 +250,9 @@ describe('社員・会社・token API CLI', () => {
       { args: ['company:show'], status: 403, body: { error: { code: 'forbidden' } }, code: 'forbidden' },
       { args: ['employee:add', 'akiyama'], status: 403, body: { error: { code: 'forbidden' } }, code: 'forbidden' },
       { args: ['employee:add', 'akiyama'], status: 400, body: { error: { code: 'invalid_request' } }, code: 'collector_invalid_request' },
+      { args: ['employee:rename', EMPLOYEE_ID, 'Alicia'], status: 403, body: { error: { code: 'forbidden' } }, code: 'forbidden' },
+      { args: ['employee:rename', EMPLOYEE_ID, 'Alicia'], status: 404, body: { error: { code: 'not_found' } }, code: 'employee_not_found' },
+      { args: ['employee:rename', EMPLOYEE_ID, 'Alicia'], status: 400, body: { error: { code: 'invalid_request' } }, code: 'collector_invalid_request' },
       { args: ['token:issue', EMPLOYEE_ID, '--scope', 'employee'], status: 404, body: { error: { code: 'not_found' } }, code: 'employee_not_found' },
       { args: ['token:revoke', TOKEN_ID], status: 404, body: { error: { code: 'not_found' } }, code: 'token_not_found' },
       { args: ['token:revoke', TOKEN_ID], status: 409, body: { error: { code: 'conflict' } }, code: 'last_company_admin' },
