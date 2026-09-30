@@ -38,6 +38,9 @@ export function ensureKeychainToken(env: NodeJS.ProcessEnv, account: string): Ke
   if (existing !== null) {
     return { token: existing, created: false };
   }
+  if (process.stderr.isTTY) {
+    process.stderr.write('Yori tokenを2回入力してください。\n');
+  }
   const added = spawnSync(bin, ['add-generic-password', '-U', '-a', account, '-s', COLLECTOR_KEYCHAIN_SERVICE, '-w'], {
     stdio: 'inherit',
   });
