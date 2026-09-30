@@ -18,7 +18,7 @@ npx yori-cli collector:install
 - hookは固定のlocal artifact（`~/.local/share/yori/collector/versions/<version>/`）をstable launcher経由で呼び、npxやlatestへ依存しません。manifestとinstall stateはcollector version・Git SHA・SHA-256 checksumを保持し、同一versionで識別情報が違うartifactは拒否します。
 - 設定は`~/.yori-collector.json`、stateは`~/.yori-collector`、token環境変数は`YORI_COLLECTOR_TOKEN`。
 - `project:add`はcwdのGit remoteを社員tokenの会社へ登録し、新規は`done`、登録済みは`already`を返します。同じ会社の社員は登録済みprojectを共通利用します。
-- `me`は通常tokenで本人・会社・現在token・会社projectを表示します。`company:show`、`member:add`、API版token管理は別Keychain service `online.yori.admin`のcompany admin tokenを使い、通常collector tokenを上書きしません。
+- `me`は通常tokenで本人・会社・現在token・会社projectを表示します。`company:show`、`employee:add`、API版token管理は別Keychain service `online.yori.admin`のcompany admin tokenを使い、通常collector tokenを上書きしません。
 
 継続運用:
 
@@ -89,8 +89,7 @@ DATABASE_URL='<database-url>' npm run --silent yori -- <command> [argument]
 | `employee:create <file.json>` | 指定した会社に社員を登録する |
 | `project:create <file.json>` | 指定した会社に案件を登録する |
 | `project:add` | cwdのrepositoryを社員tokenの会社へ登録する（JSON・`DATABASE_URL`不要） |
-| `member:add <display-name>` | company admin tokenで会社へ社員を追加する（JSON・`DATABASE_URL`不要） |
-| `employee:add <display-name>` | `member:add`の互換alias |
+| `employee:add <display-name>` | company admin tokenで会社へ社員を追加する（JSON・`DATABASE_URL`不要） |
 | `member:add <file.json>` | 旧DB管理用。案件に社員を追加する |
 | `member:remove <file.json>` | 案件から社員を外す |
 | `token:issue <file.json>` | 指定した社員の認証トークンを発行する |
@@ -169,16 +168,16 @@ DATABASE_URL='<database-url>' npm run --silent yori -- <command> [argument]
 成功出力: { "status": "created", "project_id": "<uuid>", "company_id": "<uuid>", "repository_identifier": "github.com/example/project-a" }
 ```
 
-### `member:add`
+### `employee:add`
 
 ```text
-入力:     member:add "akiyama"
+入力:     employee:add "akiyama"
 成功出力: { "status": "done", "employee_id": "<uuid>", "display_name": "akiyama", "created_at": "<timestamp>" }
 ```
 
 作成された社員のtokenは自動発行しない。続けて`token:issue <employee-id> --scope employee`を実行する。同じ会社のprojectは全社員が共通利用するため、projectごとの所属追加は不要。
 
-### `member:add <file.json>`（旧DB管理用）
+### `member:add <file.json>`
 
 ```text
 入力:     { "company_id": "<uuid>", "project_id": "<uuid>", "employee_id": "<uuid>" }
