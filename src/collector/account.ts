@@ -53,6 +53,14 @@ export type CompanyOutput = z.infer<typeof companyResponseSchema>;
 export type MemberCreateOutput = z.infer<typeof memberCreateResponseSchema>;
 export type TokenIssueOutput = z.infer<typeof issueResponseSchema>;
 export type TokenRevokeOutput = z.infer<typeof revokeResponseSchema>;
+export interface MemberCreateWithTokenOutput {
+  status: 'done';
+  employee_id: string;
+  display_name: string;
+  token_id: string;
+  scope: 'employee';
+  token: string;
+}
 
 function apiFailure(status: number, body: unknown, notFound: AdminErrorCode, conflict: AdminErrorCode): never {
   const parsed = accountErrorSchema.safeParse(body);
@@ -123,6 +131,32 @@ async function accountResult<T>(run: () => Promise<T>): Promise<AdminResult<T>> 
   }
 }
 
+function requestMemberCreate(apiUrl: string, token: string, displayName: string): Promise<MemberCreateOutput> {
+  return requestJson(
+    apiUrl,
+    token,
+    '/v1/employees',
+    { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ display_name: displayName }) },
+    201,
+    memberCreateResponseSchema,
+    'employee_not_found',
+    'internal_error',
+  );
+}
+
+function requestTokenIssue(apiUrl: string, token: string, employeeId: string, scope: TokenScope): Promise<TokenIssueOutput> {
+  return requestJson(
+    apiUrl,
+    token,
+    `/v1/employees/${employeeId}/tokens`,
+    { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ scope }) },
+    201,
+    issueResponseSchema,
+    'employee_not_found',
+    'internal_error',
+  );
+}
+
 export async function loadMeViaApi(env: NodeJS.ProcessEnv): Promise<AdminResult<MeOutput>> {
   return accountResult(() =>
     withAccountToken(env, false, (apiUrl, token) =>
@@ -143,19 +177,29 @@ export async function createMemberViaApi(
   env: NodeJS.ProcessEnv,
   displayName: string,
 ): Promise<AdminResult<MemberCreateOutput>> {
+  return accountResult(() => withAccountToken(env, true, (apiUrl, token) => requestMemberCreate(apiUrl, token, displayName)));
+}
+
+export async function createMemberWithTokenViaApi(
+  env: NodeJS.ProcessEnv,
+  displayName: string,
+): Promise<AdminResult<MemberCreateWithTokenOutput>> {
   return accountResult(() =>
-    withAccountToken(env, true, (apiUrl, token) =>
-      requestJson(
-        apiUrl,
-        token,
-        '/v1/employees',
-        { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ display_name: displayName }) },
-        201,
-        memberCreateResponseSchema,
-        'employee_not_found',
-        'internal_error',
-      ),
-    ),
+    withAccountToken(env, true, async (apiUrl, token) => {
+      const employee = await requestMemberCreate(apiUrl, token, displayName);
+      const issued = await requestTokenIssue(apiUrl, token, employee.employee_id, 'employee');
+      if (issued.employee_id !== employee.employee_id || issued.scope !== 'employee') {
+        throw new CollectorFailure('collector_server_incompatible');
+      }
+      return {
+        status: 'done',
+        employee_id: employee.employee_id,
+        display_name: employee.display_name,
+        token_id: issued.token_id,
+        scope: 'employee',
+        token: issued.token,
+      };
+    }),
   );
 }
 
@@ -164,20 +208,7 @@ export async function issueTokenViaApi(
   employeeId: string,
   scope: TokenScope,
 ): Promise<AdminResult<TokenIssueOutput>> {
-  return accountResult(() =>
-    withAccountToken(env, true, (apiUrl, token) =>
-      requestJson(
-        apiUrl,
-        token,
-        `/v1/employees/${employeeId}/tokens`,
-        { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ scope }) },
-        201,
-        issueResponseSchema,
-        'employee_not_found',
-        'internal_error',
-      ),
-    ),
-  );
+  return accountResult(() => withAccountToken(env, true, (apiUrl, token) => requestTokenIssue(apiUrl, token, employeeId, scope)));
 }
 
 export async function revokeTokenViaApi(env: NodeJS.ProcessEnv, tokenId: string): Promise<AdminResult<TokenRevokeOutput>> {
