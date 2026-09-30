@@ -73,28 +73,36 @@ describe('社員・会社・token API CLI', () => {
     }
   });
 
-  it('member:addとemployee:addは表示名を管理APIへ送り、会社の社員を作成する', async () => {
-    for (const command of ['member:add', 'employee:add']) {
-      await withCollectorFixture(async (fixture) => {
-        await writeFile(fixture.adminKeychainPath, ADMIN_TOKEN, 'utf8');
-        const created = {
-          status: 'done',
-          employee_id: NEW_EMPLOYEE_ID,
-          display_name: 'akiyama',
-          created_at: CREATED_AT,
-        };
-        await writeApiSpec(fixture, [{ status: 201, body: created }], { includeCompatibilityProbe: false });
+  it('employee:addは表示名を管理APIへ送り、会社の社員を作成する', async () => {
+    await withCollectorFixture(async (fixture) => {
+      await writeFile(fixture.adminKeychainPath, ADMIN_TOKEN, 'utf8');
+      const created = {
+        status: 'done',
+        employee_id: NEW_EMPLOYEE_ID,
+        display_name: 'akiyama',
+        created_at: CREATED_AT,
+      };
+      await writeApiSpec(fixture, [{ status: 201, body: created }], { includeCompatibilityProbe: false });
 
-        assert.deepEqual(parseCollectorSuccess(await runRootCli(fixture, [command, 'akiyama'])), created);
+      assert.deepEqual(parseCollectorSuccess(await runRootCli(fixture, ['employee:add', 'akiyama'])), created);
 
-        const requests = await readApiRequests(fixture);
-        assert.equal(requests.length, 1);
-        assert.equal(requests[0].url, `${DEFAULT_API_URL}/v1/employees`);
-        assert.equal(requests[0].method, 'POST');
-        assert.equal(requests[0].authorization, `Bearer ${ADMIN_TOKEN}`);
-        assert.deepEqual(JSON.parse(String(requests[0].body)), { display_name: 'akiyama' });
-      });
-    }
+      const requests = await readApiRequests(fixture);
+      assert.equal(requests.length, 1);
+      assert.equal(requests[0].url, `${DEFAULT_API_URL}/v1/employees`);
+      assert.equal(requests[0].method, 'POST');
+      assert.equal(requests[0].authorization, `Bearer ${ADMIN_TOKEN}`);
+      assert.deepEqual(JSON.parse(String(requests[0].body)), { display_name: 'akiyama' });
+    });
+  });
+
+  it('member:addの文字列引数を社員作成APIとして扱わない', async () => {
+    await withCollectorFixture(async (fixture) => {
+      const run = await runRootCli(fixture, ['member:add', 'akiyama']);
+      assert.equal(run.code, 1);
+      assert.equal(run.stdout, '');
+      assert.equal(run.stderr, 'admin: invalid_input_file\n');
+      assert.deepEqual(await readApiRequests(fixture), []);
+    });
   });
 
   it('token:revokeのUUID引数はAPI DELETEへ送り、done/alreadyを返す', async () => {
@@ -119,9 +127,9 @@ describe('社員・会社・token API CLI', () => {
     for (const args of [
       ['me', 'extra'],
       ['company:show', 'extra'],
-      ['member:add'],
-      ['member:add', ''],
-      ['member:add', 'akiyama', 'extra'],
+      ['employee:add'],
+      ['employee:add', ''],
+      ['employee:add', 'akiyama', 'extra'],
       ['token:issue', 'not-a-uuid', '--scope', 'employee'],
       ['token:issue', EMPLOYEE_ID, '--scope', 'owner'],
       ['token:issue', EMPLOYEE_ID, 'employee'],
@@ -141,8 +149,8 @@ describe('社員・会社・token API CLI', () => {
     for (const fixtureCase of [
       { args: ['company:show'], status: 401, body: { error: { code: 'unauthorized' } }, code: 'collector_unauthorized' },
       { args: ['company:show'], status: 403, body: { error: { code: 'forbidden' } }, code: 'forbidden' },
-      { args: ['member:add', 'akiyama'], status: 403, body: { error: { code: 'forbidden' } }, code: 'forbidden' },
-      { args: ['member:add', 'akiyama'], status: 400, body: { error: { code: 'invalid_request' } }, code: 'collector_invalid_request' },
+      { args: ['employee:add', 'akiyama'], status: 403, body: { error: { code: 'forbidden' } }, code: 'forbidden' },
+      { args: ['employee:add', 'akiyama'], status: 400, body: { error: { code: 'invalid_request' } }, code: 'collector_invalid_request' },
       { args: ['token:issue', EMPLOYEE_ID, '--scope', 'employee'], status: 404, body: { error: { code: 'not_found' } }, code: 'employee_not_found' },
       { args: ['token:revoke', TOKEN_ID], status: 404, body: { error: { code: 'not_found' } }, code: 'token_not_found' },
       { args: ['token:revoke', TOKEN_ID], status: 409, body: { error: { code: 'conflict' } }, code: 'last_company_admin' },
