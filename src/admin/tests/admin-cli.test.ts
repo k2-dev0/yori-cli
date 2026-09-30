@@ -601,7 +601,7 @@ describe('競合とtoken生成', () => {
     let generated = 0;
     const exhausted = await issueToken(
       pool,
-      { company_id: companyId, employee_id: employeeId },
+      { company_id: companyId, employee_id: employeeId, scope: 'employee' },
       {
         generateToken: () => {
           generated += 1;
@@ -616,7 +616,7 @@ describe('競合とtoken生成', () => {
     generated = 0;
     const retried = await issueToken(
       pool,
-      { company_id: companyId, employee_id: employeeId },
+      { company_id: companyId, employee_id: employeeId, scope: 'employee' },
       {
         generateToken: () => {
           generated += 1;
