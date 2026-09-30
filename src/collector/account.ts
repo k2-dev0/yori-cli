@@ -34,6 +34,7 @@ const companyResponseSchema = z.strictObject({
   projects: z.array(projectSchema),
   tokens: z.array(tokenMetadataSchema),
 });
+const memberCreateResponseSchema = employeeSchema.extend({ status: z.literal('done') });
 const issueResponseSchema = z.strictObject({
   status: z.literal('done'),
   token_id: z.uuid(),
@@ -49,6 +50,7 @@ const accountErrorSchema = z.strictObject({
 export type TokenScope = z.infer<typeof tokenScopeSchema>;
 export type MeOutput = z.infer<typeof meResponseSchema>;
 export type CompanyOutput = z.infer<typeof companyResponseSchema>;
+export type MemberCreateOutput = z.infer<typeof memberCreateResponseSchema>;
 export type TokenIssueOutput = z.infer<typeof issueResponseSchema>;
 export type TokenRevokeOutput = z.infer<typeof revokeResponseSchema>;
 
@@ -101,9 +103,12 @@ async function withAccountToken<T>(env: NodeJS.ProcessEnv, admin: boolean, run: 
   try {
     return await run(apiUrl, keychain.token);
   } catch (error) {
-    if (keychain.created && error instanceof CollectorFailure && error.code === 'collector_unauthorized') {
-      if (admin) deleteAdminKeychainToken(env, apiUrl);
-      else deleteKeychainToken(env, apiUrl);
+    if (error instanceof CollectorFailure) {
+      if (admin && (error.code === 'collector_unauthorized' || error.code === 'forbidden')) {
+        deleteAdminKeychainToken(env, apiUrl);
+      } else if (keychain.created && error.code === 'collector_unauthorized') {
+        deleteKeychainToken(env, apiUrl);
+      }
     }
     throw error;
   }
@@ -130,6 +135,26 @@ export async function loadCompanyViaApi(env: NodeJS.ProcessEnv): Promise<AdminRe
   return accountResult(() =>
     withAccountToken(env, true, (apiUrl, token) =>
       requestJson(apiUrl, token, '/v1/company', { method: 'GET' }, 200, companyResponseSchema, 'company_not_found', 'internal_error'),
+    ),
+  );
+}
+
+export async function createMemberViaApi(
+  env: NodeJS.ProcessEnv,
+  displayName: string,
+): Promise<AdminResult<MemberCreateOutput>> {
+  return accountResult(() =>
+    withAccountToken(env, true, (apiUrl, token) =>
+      requestJson(
+        apiUrl,
+        token,
+        '/v1/employees',
+        { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ display_name: displayName }) },
+        201,
+        memberCreateResponseSchema,
+        'employee_not_found',
+        'internal_error',
+      ),
     ),
   );
 }
