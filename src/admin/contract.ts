@@ -34,6 +34,7 @@ export const ADMIN_ERROR_CODES = [
   'collector_not_installed',
   'collector_repository_not_found',
   'collector_rollback_failed',
+  'collector_server_incompatible',
   'collector_unauthorized',
   'unsupported_platform',
   'internal_error',
