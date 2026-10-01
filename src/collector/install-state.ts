@@ -9,6 +9,8 @@ export interface CollectorInstallState {
   collector_version: string;
   git_sha: string | null;
   checksum: string;
+  // MCP導入前のinstall.jsonには無いためnullで読む。
+  mcp_checksum: string | null;
   policy_version: number | null;
 }
 
@@ -23,6 +25,8 @@ export async function readCollectorInstallState(filePath: string): Promise<Colle
     const parsed: unknown = JSON.parse(text);
     if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
       const { installer_version, collector_version, git_sha, checksum, policy_version } = parsed as Record<string, unknown>;
+      const mcpChecksum = (parsed as Record<string, unknown>).mcp_checksum;
+      const mcp_checksum = typeof mcpChecksum === 'string' && mcpChecksum.length > 0 ? mcpChecksum : null;
       if (
         typeof installer_version === 'string' &&
         installer_version.length > 0 &&
@@ -33,7 +37,7 @@ export async function readCollectorInstallState(filePath: string): Promise<Colle
         checksum.length > 0 &&
         (policy_version === null || typeof policy_version === 'number')
       ) {
-        return { installer_version, collector_version, git_sha: typeof git_sha === 'string' ? git_sha : null, checksum, policy_version };
+        return { installer_version, collector_version, git_sha: typeof git_sha === 'string' ? git_sha : null, checksum, mcp_checksum, policy_version };
       }
     }
   } catch {
