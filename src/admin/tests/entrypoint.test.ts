@@ -48,12 +48,20 @@ describe('bin entrypoint', () => {
     assert.deepEqual(packageJson.bin, { yori: 'dist/yori.cjs' });
     assert.deepEqual(
       [...packageJson.files].sort(),
-      ['dist/collector/collector-manifest.json', 'dist/collector/yori-collector.mjs', 'dist/yori.cjs', 'dist/yori.cjs.map'].sort(),
+      [
+        'dist/collector/collector-manifest.json',
+        'dist/collector/mcp-manifest.json',
+        'dist/collector/yori-collector.mjs',
+        'dist/collector/yori-mcp.mjs',
+        'dist/yori.cjs',
+        'dist/yori.cjs.map',
+      ].sort(),
     );
     assert.deepEqual(packageJson.publishConfig, { access: 'public' });
     assert.equal(packageJson.dependencies, undefined);
     assert.equal(packageJson.devDependencies.esbuild, '0.28.2');
     assert.equal(packageJson.devDependencies.pg, '8.23.0');
+    assert.equal(packageJson.devDependencies['smol-toml'], '1.9.0');
     assert.equal(packageJson.devDependencies.uuid, '13.0.2');
     assert.equal(packageJson.devDependencies.zod, '4.6.5');
     assert.equal(packageJson.scripts.yori, 'tsx src/admin/cli.ts');
