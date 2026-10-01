@@ -45,6 +45,28 @@ async function writeArtifact(
   };
   await writeFile(path.join(outDir, 'yori-collector.mjs'), options.content, 'utf8');
   await writeFile(path.join(outDir, 'collector-manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
+  // MCP artifactは同じversion・Git SHAでdist/mcpへ並べる。個別の不一致はwriteMcpArtifactで上書きする。
+  await writeMcpArtifact(yoriRepository, { version: options.version, content: MCP_CONTENT, gitSha: options.gitSha });
+}
+
+const MCP_CONTENT = 'console.log("mcp-build-fixture");\n';
+const MCP_BUNDLE_PATH = path.join(DIST_DIR, 'yori-mcp.mjs');
+const MCP_MANIFEST_PATH = path.join(DIST_DIR, 'mcp-manifest.json');
+
+async function writeMcpArtifact(
+  yoriRepository: string,
+  options: { version: string; content: string; checksum?: string; gitSha?: string },
+): Promise<void> {
+  const outDir = path.join(yoriRepository, 'dist', 'mcp');
+  await mkdir(outDir, { recursive: true });
+  const manifest = {
+    version: options.version,
+    file: 'yori-mcp.mjs',
+    git_sha: options.gitSha ?? '1111111111111111111111111111111111111111',
+    checksum: options.checksum ?? createHash('sha256').update(options.content).digest('hex'),
+  };
+  await writeFile(path.join(outDir, 'yori-mcp.mjs'), options.content, 'utf8');
+  await writeFile(path.join(outDir, 'mcp-manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
 }
 
 // dist/collectorを退避し、test後に元の状態へ戻す。存在しなかった場合は削除する。
@@ -95,6 +117,15 @@ describe('collector build copy', () => {
         assert.ok(packedPaths.includes('dist/collector/collector-manifest.json'), `packへcollector manifestが含まれていない: ${JSON.stringify(packedPaths)}`);
         assert.ok(!packedPaths.some((value) => value.startsWith('src/')), 'packへsrcが含まれている');
 
+        // MCP artifactもchecksum検証してcollectorの隣へcopyし、packへ同梱する。
+        assert.equal(await readFile(MCP_BUNDLE_PATH, 'utf8'), MCP_CONTENT, 'MCP bundleのcopy内容がfixtureと違う');
+        const mcpManifest = JSON.parse(await readFile(MCP_MANIFEST_PATH, 'utf8')) as Record<string, unknown>;
+        assert.equal(mcpManifest.file, 'yori-mcp.mjs');
+        assert.equal(mcpManifest.version, packageJson.version);
+        assert.equal(mcpManifest.checksum, createHash('sha256').update(MCP_CONTENT).digest('hex'));
+        assert.ok(packedPaths.includes('dist/collector/yori-mcp.mjs'), `packへMCP bundleが含まれていない: ${JSON.stringify(packedPaths)}`);
+        assert.ok(packedPaths.includes('dist/collector/mcp-manifest.json'), `packへMCP manifestが含まれていない: ${JSON.stringify(packedPaths)}`);
+
         // checksum不一致のartifactはbuildを失敗させ、直前のcopyを変更しない。
         const before = await readFile(BUNDLE_PATH);
         const beforeManifest = await readFile(MANIFEST_PATH);
@@ -126,6 +157,32 @@ describe('collector build copy', () => {
           const result = runBuild(yoriRepository);
           assert.notEqual(result.status, 0, `不正metadataを成功扱いした: ${JSON.stringify(artifact)}`);
         }
+      });
+    } finally {
+      await rm(yoriRepository, { recursive: true, force: true });
+    }
+  });
+
+  it('MCP artifactのchecksum不一致・version不一致・欠落ではbuildを失敗させ、既存のMCP copyを変更しない', async () => {
+    const yoriRepository = await mkdtemp(path.join(tmpdir(), 'yori-repository-mcp-fixture-'));
+    try {
+      await withDistBackup(async () => {
+        const packageJson = JSON.parse(await readFile(path.join(REPO_ROOT, 'package.json'), 'utf8')) as { version: string };
+        await writeArtifact(yoriRepository, { version: packageJson.version, content: 'console.log("mcp-case");\n' });
+        assert.equal(runBuild(yoriRepository).status, 0, '事前buildが失敗した');
+        const before = await readFile(MCP_BUNDLE_PATH);
+        const beforeManifest = await readFile(MCP_MANIFEST_PATH);
+        for (const artifact of [
+          { version: packageJson.version, content: 'console.log("bad-checksum");\n', checksum: '0'.repeat(64) },
+          { version: '0.0.0', content: 'console.log("bad-version");\n' },
+        ]) {
+          await writeMcpArtifact(yoriRepository, artifact);
+          assert.notEqual(runBuild(yoriRepository).status, 0, `不正なMCP artifactでbuildが成功した: ${JSON.stringify(artifact)}`);
+          assert.deepEqual(await readFile(MCP_BUNDLE_PATH), before, '不正なMCP artifactで既存copyを変更している');
+          assert.deepEqual(await readFile(MCP_MANIFEST_PATH), beforeManifest, '不正なMCP artifactで既存manifestを変更している');
+        }
+        await rm(path.join(yoriRepository, 'dist', 'mcp'), { recursive: true, force: true });
+        assert.notEqual(runBuild(yoriRepository).status, 0, 'MCP artifactが無いYORI_REPOSITORYでbuildが成功した');
       });
     } finally {
       await rm(yoriRepository, { recursive: true, force: true });
@@ -172,7 +229,14 @@ describe('collector build copy', () => {
     };
     assert.deepEqual(
       [...packageJson.files].sort(),
-      ['dist/collector/collector-manifest.json', 'dist/collector/yori-collector.mjs', 'dist/yori.cjs', 'dist/yori.cjs.map'].sort(),
+      [
+        'dist/collector/collector-manifest.json',
+        'dist/collector/mcp-manifest.json',
+        'dist/collector/yori-collector.mjs',
+        'dist/collector/yori-mcp.mjs',
+        'dist/yori.cjs',
+        'dist/yori.cjs.map',
+      ].sort(),
     );
     assert.equal(packageJson.dependencies, undefined, 'runtime dependencyが追加されている');
     assert.deepEqual(packageJson.bin, { yori: 'dist/yori.cjs' });
