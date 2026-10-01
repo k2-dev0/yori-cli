@@ -122,6 +122,22 @@ sudo docker compose -p yori --env-file /etc/yori/yori.env -f deployment/compose.
 
 同じ会社で同じcanonical identifierの案件が既にある場合は `repository_conflict`。既存案件は変更しない。
 
+### `project:remove <file.json>`
+
+```json
+{ "company_id": "<uuid>", "project_id": "<uuid>" }
+```
+
+```json
+{"status":"removed","project_id":"<uuid>"}
+```
+
+案件を物理削除する。所属・repository alias・収集済みの会話・検索文書・検索履歴は外部キーの `ON DELETE CASCADE` で同じtransaction内に消え、復元できない。確認promptは出さない。
+
+- 案件は入力会社のscope内で解決し、他社・存在しない・削除済みの案件は `project_not_found`。
+- 削除後はそのrepositoryを案件へ解決できず、新規収集は止まる。社員端末に残る未送信分はAPIが403で拒否し、collectorは恒久失敗として保持する。
+- 社員・token・会社のredaction policyは変更しない。
+
 ### `employee:add <display-name> [--issue-token]`
 
 ```text
@@ -286,6 +302,7 @@ repositoryはUTF-8で1024バイト以内。host小文字・先頭slashなし・�
 |---|---|
 | `employee:create` / `project:create` | 入力会社が無ければ `company_not_found` |
 | `inspect` | 入力会社が無ければ `company_not_found` |
+| `project:remove` | 案件は入力会社のscope内で解決し、他社・存在しない案件は `project_not_found` |
 | `member:add` / `member:remove` | 案件は入力会社のscope内で解決し、他社・存在しない案件は `project_not_found`。社員はIDで解決し、存在しなければ `employee_not_found`、会社が違えば `company_scope_mismatch` |
 | `token:issue` | 社員はIDで解決し、存在しなければ `employee_not_found`、会社が違えば `company_scope_mismatch` |
 | `token:revoke` | tokenはIDで解決し、存在しなければ `token_not_found`、token会社または社員会社が違えば `company_scope_mismatch` |
@@ -358,5 +375,5 @@ repository testは `src/admin/tests/schema.sql` で管理対象table契約を高
 - 秘密情報を誰が・どこで・どのsecret managerへ作成・配布・ローテーションするかの運用。
 - `.env`、API key、DB password、社員端末の環境変数の作成手順。
 - OpenAPI生成、管理Web UI、SSO、管理者アカウント、RBAC。
-- 会社・社員・案件の物理削除、表示名やrepository identifierの更新、監査table。
+- 会社・社員の物理削除、表示名やrepository identifierの更新、監査table。
 - provider policy承認（`yori` 本体の `provider:approve` / `provider:revoke` を使う）。
