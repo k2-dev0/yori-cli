@@ -16,6 +16,8 @@ import {
   type MemberRemoveOutput,
   type ProjectCreateInput,
   type ProjectCreateOutput,
+  type ProjectRemoveInput,
+  type ProjectRemoveOutput,
   type RedactionListOutput,
   type RedactionPolicy,
   type RedactionReplaceInput,
@@ -310,6 +312,17 @@ export async function addMember(pool: Pool, input: MemberInput): Promise<AdminRe
       throw error;
     }
     return { ok: true, value: { status: 'created', project_id: input.project_id, employee_id: input.employee_id } };
+  });
+}
+
+// 会社境界内のproject行を物理削除する。所属・alias・収集済みデータは外部キーのON DELETE CASCADEで同じtransaction内に消える。
+export async function removeProject(pool: Pool, input: ProjectRemoveInput): Promise<AdminResult<ProjectRemoveOutput>> {
+  return withTransaction(pool, async (client) => {
+    const removed = await client.query('DELETE FROM projects WHERE id = $1 AND company_id = $2', [input.project_id, input.company_id]);
+    if (removed.rowCount !== 1) {
+      return { ok: false, code: 'project_not_found' };
+    }
+    return { ok: true, value: { status: 'removed', project_id: input.project_id } };
   });
 }
 
