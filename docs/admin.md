@@ -323,15 +323,16 @@ repositoryはUTF-8で1024バイト以内。host小文字・先頭slashなし・�
 | `internal_error` | migration marker欠落・DB接続障害・予期しない例外・token hash再生成の上限到達 |
 | `agent_not_found` | collector導入先のagent設定（Codex / Claude Code）が1件も存在しない |
 | `unsupported_platform` | collector commandをmacOS以外で実行した |
-| `collector_artifact_invalid` | collector artifactまたはmanifestの欠落・checksum不一致 |
+| `collector_artifact_invalid` | collector / MCP artifactまたはmanifestの欠落・checksum不一致、MCPとcollectorのversion不一致 |
 | `collector_config_invalid` | collector configのapi_urlがhttps/loopback http以外、またはuserinfo・query・fragment付き |
-| `collector_hook_invalid` | hook設定がsymlink・不正JSON・非object |
-| `collector_hook_conflict` | 既存hookに所有entryと競合するcollector設定がある |
+| `collector_hook_invalid` | hook設定またはMCP登録先（`~/.codex/config.toml`・`~/.claude.json`）がsymlink・不正JSON・不正TOML・非object |
+| `collector_hook_conflict` | 既存hookに所有entryと競合するcollector設定がある。`config.toml`でyori MCPが別の書き方で定義済み、または書き込み直前に他processが設定を変更した場合も含む |
 | `collector_hook_error` | hook書き込みに失敗し、全成果物をrollbackした |
 | `collector_keychain_error` | Keychain token / known secretの登録・取得・削除に失敗した |
 | `collector_repository_not_found` | cwdのgit originをcanonical repositoryへ解決できない |
 | `collector_invalid_request` / `collector_unauthorized` | setup APIが400 / 401を返した。collector:secretのlabel・値・上限・未登録label違反も `collector_invalid_request` |
 | `launcher_error`（collector stderr） | stable launcherがindex不正・Keychain item欠落・known secret制限違反を検出し、子collectorを起動しなかった |
+| `launcher_error`（mcp stderr） | MCP launcherが設定・install状態を読めない、またはKeychainにtokenが無く、子MCPを起動しなかった |
 | `collector_internal_error` | setup APIの500・transport error・応答契約違反。collector:secret indexの破損も含む |
 | `collector_not_installed` | `collector:update` / `collector:backfill` の対象となるinstall状態が無い |
 | `collector_backfill_error` | 配布collectorのbackfillが固定契約外の出力または失敗を返した |
