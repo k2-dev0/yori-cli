@@ -199,7 +199,7 @@ describe('collector:install', () => {
       const packageJson = JSON.parse(await readText(path.join(REPO_ROOT, 'package.json'))) as { version: string };
       assert.deepEqual(
         Object.keys(installState).sort(),
-        ['checksum', 'collector_version', 'git_sha', 'installer_version', 'policy_version'],
+        ['checksum', 'collector_version', 'git_sha', 'installer_version', 'mcp_checksum', 'policy_version'],
         `install.jsonのfieldが違う: ${installStateText}`,
       );
       assert.equal(installState.installer_version, packageJson.version);
