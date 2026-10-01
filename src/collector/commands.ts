@@ -5,10 +5,13 @@ import { lstat, readFile, rm, stat } from 'node:fs/promises';
 import path from 'node:path';
 import type { AdminResult } from '../admin/contract.js';
 import { loadCollectorApiUrl, requestCollectorSetup, type CollectorSetupResult } from './api.js';
-import { readCollectorArtifact } from './artifact.js';
+import { readCollectorArtifact, readCollectorMcpArtifact, type CollectorArtifact } from './artifact.js';
+import { collectorMcpConfigPath, collectorMcpLauncherPath, planCollectorMcp, writeCollectorMcpLauncher } from './mcp.js';
 import {
   COLLECTOR_BUNDLE_FILE_NAME,
   COLLECTOR_MANIFEST_FILE_NAME,
+  COLLECTOR_MCP_BUNDLE_FILE_NAME,
+  COLLECTOR_MCP_MANIFEST_FILE_NAME,
   type CollectorAgent,
   type CollectorCommandOutput,
   CollectorFailure,
@@ -70,6 +73,8 @@ interface InstallFootprint {
   versionDirExisted: boolean;
   versionBundle: FileSnapshot | null;
   versionManifest: FileSnapshot | null;
+  // MCPのlauncher・設定file・version内のbundleとmanifest。
+  mcpFiles: { path: string; snapshot: FileSnapshot | null }[];
 }
 
 function successOutput(status: string, version: string | null, agents: CollectorAgent[], checks: Record<string, boolean>): CollectorCommandOutput {
@@ -87,6 +92,16 @@ function rejectConflictingSameVersion(installed: CollectorInstallState | null, a
   }
 }
 
+// MCP artifactはcollectorと同じversionで配布する。launcherはcollector versionのdirectoryからMCPを起動する。
+async function readPairedMcpArtifact(env: NodeJS.ProcessEnv, version: string, installed: CollectorInstallState | null): Promise<CollectorArtifact> {
+  const mcp = await readCollectorMcpArtifact(env);
+  const recorded = installed !== null && installed.collector_version === mcp.version ? installed.mcp_checksum : null;
+  if (mcp.version !== version || (recorded !== null && recorded !== mcp.checksum)) {
+    throw new CollectorFailure('collector_artifact_invalid');
+  }
+  return mcp;
+}
+
 async function snapshotFile(filePath: string): Promise<FileSnapshot | null> {
   let stats;
   try {
@@ -102,7 +117,14 @@ async function snapshotFile(filePath: string): Promise<FileSnapshot | null> {
 
 async function captureInstallFootprint(home: string, collectorVersion: string): Promise<InstallFootprint> {
   const versionDir = collectorVersionDir(home, collectorVersion);
+  const mcpPaths = [
+    collectorMcpLauncherPath(home),
+    collectorMcpConfigPath(home),
+    path.join(versionDir, COLLECTOR_MCP_BUNDLE_FILE_NAME),
+    path.join(versionDir, COLLECTOR_MCP_MANIFEST_FILE_NAME),
+  ];
   return {
+    mcpFiles: await Promise.all(mcpPaths.map(async (target) => ({ path: target, snapshot: await snapshotFile(target) }))),
     installRootExisted: existsSync(collectorInstallRoot(home)),
     config: await snapshotFile(collectorConfigPath(home)),
     launcher: await snapshotFile(collectorLauncherPath(home)),
@@ -143,6 +165,9 @@ async function rollbackInstallFootprint(home: string, collectorVersion: string, 
     }
     await attempt(() => restoreSnapshot(footprint.launcher, collectorLauncherPath(home)));
     await attempt(() => restoreSnapshot(footprint.installState, collectorInstallStatePath(home)));
+    for (const file of footprint.mcpFiles) {
+      await attempt(() => restoreSnapshot(file.snapshot, file.path));
+    }
   }
   await attempt(() => restoreSnapshot(footprint.config, collectorConfigPath(home)));
   if (failed) {
@@ -160,9 +185,11 @@ async function installCollector(env: NodeJS.ProcessEnv): Promise<CollectorComman
   const artifact = await readCollectorArtifact(env);
   const previousInstall = await readCollectorInstallState(collectorInstallStatePath(home));
   rejectConflictingSameVersion(previousInstall, artifact);
+  const mcpArtifact = await readPairedMcpArtifact(env, artifact.version, previousInstall);
   const launcherPath = collectorLauncherPath(home);
   const configPath = collectorConfigPath(home);
-  const hookUpdates = await planCollectorHooks(home, agents, launcherPath, configPath, 'install');
+  const plannedHooks = await planCollectorHooks(home, agents, launcherPath, configPath, 'install');
+  const hookUpdates = await planCollectorMcp(home, agents, 'install', plannedHooks);
   const apiUrl = await loadCollectorApiUrl(configPath);
   const repository = resolveRepositoryFromCwd(env, process.cwd());
   const keychain = ensureKeychainToken(env, apiUrl);
@@ -181,7 +208,9 @@ async function installCollector(env: NodeJS.ProcessEnv): Promise<CollectorComman
   let hooksCommitted = false;
   try {
     await writeCollectorVersion(home, artifact);
+    await writeCollectorVersion(home, mcpArtifact);
     await writeCollectorLauncher(home);
+    await writeCollectorMcpLauncher(home);
     await writeCollectorConfig(home, apiUrl);
     await commitCollectorHooks(hookUpdates);
     hooksCommitted = true;
@@ -190,6 +219,7 @@ async function installCollector(env: NodeJS.ProcessEnv): Promise<CollectorComman
       collector_version: artifact.version,
       git_sha: artifact.gitSha,
       checksum: artifact.checksum,
+      mcp_checksum: mcpArtifact.checksum,
       policy_version: setup.policy_version,
     });
   } catch (error) {
@@ -214,7 +244,7 @@ async function installCollector(env: NodeJS.ProcessEnv): Promise<CollectorComman
     }
     throw error instanceof CollectorFailure ? error : new CollectorFailure('collector_install_error');
   }
-  return successOutput('installed', artifact.version, agents, { artifact: true, launcher: true, config: true, hooks: true });
+  return successOutput('installed', artifact.version, agents, { artifact: true, launcher: true, config: true, hooks: true, mcp: true });
 }
 
 // updateは検証済みartifactへinstall.jsonを最後に切り替える。旧versionとsetup policy_versionを維持する。
@@ -226,14 +256,18 @@ async function updateCollector(env: NodeJS.ProcessEnv): Promise<CollectorCommand
   }
   const artifact = await readCollectorArtifact(env);
   rejectConflictingSameVersion(installed, artifact);
+  const mcpArtifact = await readPairedMcpArtifact(env, artifact.version, installed);
   const installerVersion = await readInstallerVersion();
   const agents = await detectCollectorAgents(home);
-  const hookUpdates = await planCollectorHooks(home, agents, collectorLauncherPath(home), collectorConfigPath(home), 'install');
+  const plannedHooks = await planCollectorHooks(home, agents, collectorLauncherPath(home), collectorConfigPath(home), 'install');
+  const hookUpdates = await planCollectorMcp(home, agents, 'install', plannedHooks);
   const footprint = await captureInstallFootprint(home, artifact.version);
   let hooksCommitted = false;
   try {
     await writeCollectorVersion(home, artifact);
+    await writeCollectorVersion(home, mcpArtifact);
     await writeCollectorLauncher(home);
+    await writeCollectorMcpLauncher(home);
     await commitCollectorHooks(hookUpdates);
     hooksCommitted = true;
     await writeCollectorInstallState(collectorInstallStatePath(home), {
@@ -241,6 +275,7 @@ async function updateCollector(env: NodeJS.ProcessEnv): Promise<CollectorCommand
       collector_version: artifact.version,
       git_sha: artifact.gitSha,
       checksum: artifact.checksum,
+      mcp_checksum: mcpArtifact.checksum,
       policy_version: installed.policy_version,
     });
   } catch (error) {
@@ -254,7 +289,7 @@ async function updateCollector(env: NodeJS.ProcessEnv): Promise<CollectorCommand
     }
     throw error instanceof CollectorFailure ? error : new CollectorFailure('collector_install_error');
   }
-  return successOutput('updated', artifact.version, agents, { artifact: true, launcher: true, hooks: true, state: true });
+  return successOutput('updated', artifact.version, agents, { artifact: true, launcher: true, hooks: true, state: true, mcp: true });
 }
 
 async function fileMode(filePath: string): Promise<number | null> {
@@ -345,6 +380,9 @@ async function doctorCollector(env: NodeJS.ProcessEnv): Promise<CollectorDoctorO
   checks.hooks =
     agents.length > 0 && (await Promise.all(agents.map((agent) => collectorHookIsCurrent(home, agent, launcherPath, configPath)))).every(Boolean);
   checks.permissions = await collectorPermissionsOkay(home, agents, collectorVersion);
+  // install時と同じ登録を計画し、書き換えが1件も不要なら登録済みとみなす。読み取りだけで判定する。
+  const mcpPending = await planCollectorMcp(home, agents, 'install', []).catch(() => null);
+  checks.mcp = existsSync(collectorMcpLauncherPath(home)) && mcpPending !== null && mcpPending.length === 0;
   checks.git = path.isAbsolute(collectorGitBin(env)) && existsSync(collectorGitBin(env));
 
   let policyVersion: number | null = null;
@@ -372,7 +410,8 @@ async function uninstallCollector(env: NodeJS.ProcessEnv): Promise<CollectorComm
   const installed = await readCollectorInstallState(collectorInstallStatePath(home)).catch(() => null);
   const launcherPath = collectorLauncherPath(home);
   const configPath = collectorConfigPath(home);
-  const hookUpdates = await planCollectorHooks(home, agents, launcherPath, configPath, 'uninstall');
+  const plannedHooks = await planCollectorHooks(home, agents, launcherPath, configPath, 'uninstall');
+  const hookUpdates = await planCollectorMcp(home, agents, 'uninstall', plannedHooks);
   await commitCollectorHooks(hookUpdates);
   await rm(configPath, { force: true });
   await rm(collectorInstallRoot(home), { recursive: true, force: true });
