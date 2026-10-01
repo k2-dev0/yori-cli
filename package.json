@@ -14,7 +14,9 @@
     "dist/yori.cjs",
     "dist/yori.cjs.map",
     "dist/collector/yori-collector.mjs",
-    "dist/collector/collector-manifest.json"
+    "dist/collector/collector-manifest.json",
+    "dist/collector/yori-mcp.mjs",
+    "dist/collector/mcp-manifest.json"
   ],
   "engines": {
     "node": ">=24"
@@ -25,7 +27,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "lint": "eslint .",
     "build": "tsc -p tsconfig.build.json",
-    "postbuild": "esbuild src/admin/bin.ts --bundle --platform=node --format=cjs --target=node24 --sourcemap --log-override:empty-import-meta=silent --outfile=dist/yori.cjs && node deployment/copy-collector.mjs",
+    "postbuild": "esbuild src/admin/bin.ts --bundle --platform=node --format=cjs --target=node24 --sourcemap --log-override:empty-import-meta=silent --outfile=dist/yori.cjs && node deployment/copy-collector.mjs && node deployment/copy-collector.mjs mcp",
     "prepack": "npm run build",
     "yori": "tsx src/admin/cli.ts"
   },
@@ -35,6 +37,7 @@
     "esbuild": "0.28.2",
     "eslint": "^9.39.5",
     "pg": "8.23.0",
+    "smol-toml": "1.9.0",
     "tsx": "^4.23.15",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.70.0",
