@@ -72,11 +72,9 @@ export async function detectCollectorAgents(home: string): Promise<CollectorAgen
         agents.push(agent);
         continue;
       }
-      if (agent === 'codex') {
-        const directory = await lstat(path.dirname(hookPath));
-        if (directory.isDirectory() && !directory.isSymbolicLink()) {
-          agents.push(agent);
-        }
+      const directory = await lstat(path.dirname(hookPath));
+      if (directory.isDirectory() && !directory.isSymbolicLink()) {
+        agents.push(agent);
       }
     } catch {
       // 存在しないagent設定は対象外にする。
