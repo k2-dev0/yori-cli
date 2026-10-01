@@ -20,6 +20,14 @@ export const COLLECTOR_INSTALL_STATE_FILE_NAME = 'install.json';
 export const COLLECTOR_BUNDLE_FILE_NAME = 'yori-collector.mjs';
 export const COLLECTOR_MANIFEST_FILE_NAME = 'collector-manifest.json';
 export const COLLECTOR_VERSION_DIR_NAME = 'versions';
+// yori MCPの配布物・launcher・設定file。MCP設定fileは環境変数名だけを持ち、URLとtokenの実値を持たない。
+export const COLLECTOR_MCP_BUNDLE_FILE_NAME = 'yori-mcp.mjs';
+export const COLLECTOR_MCP_MANIFEST_FILE_NAME = 'mcp-manifest.json';
+export const COLLECTOR_MCP_LAUNCHER_FILE_NAME = 'mcp-launcher.mjs';
+export const COLLECTOR_MCP_CONFIG_FILE_NAME = 'mcp-config.json';
+export const COLLECTOR_MCP_SERVER_NAME = 'yori';
+export const COLLECTOR_MCP_API_URL_ENV = 'YORI_API_URL';
+export const COLLECTOR_MCP_API_TOKEN_ENV = 'YORI_API_TOKEN';
 export const COLLECTOR_INSTALL_ROOT_PARTS = ['.local', 'share', 'yori', 'collector'] as const;
 
 // production binaryの絶対path。PATH解決はせず、明示されたtest/development overrideだけを受ける。
