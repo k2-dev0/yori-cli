@@ -471,6 +471,69 @@ describe('会社境界', () => {
     );
     assert.equal(await countRows(pool, 'project_members'), 1);
   });
+
+  it('別会社のproject:removeは案件を消さない', async () => {
+    const companyA = await createCompany('a');
+    const companyB = await createCompany('b');
+    const projectId = assertUuidV7((await createProject(companyA, 'github.com/example/a')).project_id);
+
+    expectFail(await runWithFile('project:remove', 'project.json', { company_id: companyB, project_id: projectId }), 'project_not_found');
+    assert.equal(await countRows(pool, 'projects'), 1);
+  });
+});
+
+describe('project:remove', () => {
+  it('案件を所属・repository aliasごと削除し、他の案件と社員は残す', async () => {
+    const companyId = await createCompany();
+    const employeeId = await createEmployee(companyId, 'Alice');
+    const removedProjectId = assertUuidV7((await createProject(companyId, 'github.com/example/removed')).project_id);
+    const keptProjectId = assertUuidV7((await createProject(companyId, 'github.com/example/kept')).project_id);
+    parseSuccessJson(await addMember(companyId, removedProjectId, employeeId));
+    parseSuccessJson(await addMember(companyId, keptProjectId, employeeId));
+    parseSuccessJson(
+      await runWithFile('project:repository:add', 'repository.json', {
+        company_id: companyId,
+        project_id: removedProjectId,
+        repository: 'github.com/example/removed-alias',
+      }),
+    );
+
+    const input = { company_id: companyId, project_id: removedProjectId };
+    assert.deepEqual(parseSuccessJson(await runWithFile('project:remove', 'project.json', input)), {
+      status: 'removed',
+      project_id: removedProjectId,
+    });
+
+    const projects = await pool.query<{ id: string }>('SELECT id FROM projects');
+    assert.deepEqual(projects.rows, [{ id: keptProjectId }]);
+    const members = await pool.query<{ project_id: string }>('SELECT project_id FROM project_members');
+    assert.deepEqual(members.rows, [{ project_id: keptProjectId }]);
+    const repositories = await pool.query<{ repository_identifier: string }>('SELECT repository_identifier FROM project_repositories');
+    assert.deepEqual(repositories.rows, [{ repository_identifier: 'github.com/example/kept' }]);
+    assert.equal(await countRows(pool, 'employees'), 1);
+  });
+
+  it('削除済み・存在しない案件はproject_not_foundで拒否する', async () => {
+    const companyId = await createCompany();
+    const projectId = assertUuidV7((await createProject(companyId, 'github.com/example/a')).project_id);
+    const input = { company_id: companyId, project_id: projectId };
+    parseSuccessJson(await runWithFile('project:remove', 'project.json', input));
+
+    expectFail(await runWithFile('project:remove', 'project.json', input), 'project_not_found');
+    expectFail(await runWithFile('project:remove', 'project.json', { ...input, project_id: companyMissingUuid }), 'project_not_found');
+  });
+
+  it('未知keyと欠落keyをDB変更前にinvalid_inputで拒否する', async () => {
+    const companyId = await createCompany();
+    const projectId = assertUuidV7((await createProject(companyId, 'github.com/example/a')).project_id);
+
+    expectFail(await runWithFile('project:remove', 'project.json', { company_id: companyId }), 'invalid_input');
+    expectFail(
+      await runWithFile('project:remove', 'project.json', { company_id: companyId, project_id: projectId, repository: 'github.com/example/a' }),
+      'invalid_input',
+    );
+    assert.equal(await countRows(pool, 'projects'), 1);
+  });
 });
 
 describe('異常系', () => {
