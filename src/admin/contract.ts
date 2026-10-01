@@ -161,6 +161,7 @@ export const repositoryInputSchema = z.strictObject({
 export const companyCreateInputSchema = z.strictObject({ name: companyName });
 export const employeeCreateInputSchema = z.strictObject({ company_id: uuid, display_name: displayName });
 export const projectCreateInputSchema = z.strictObject({ company_id: uuid, repository });
+export const projectRemoveInputSchema = z.strictObject({ company_id: uuid, project_id: uuid });
 export const memberInputSchema = z.strictObject({ company_id: uuid, project_id: uuid, employee_id: uuid });
 export const tokenIssueInputSchema = z.strictObject({ company_id: uuid, employee_id: uuid, scope: z.enum(TOKEN_SCOPES).default('employee') });
 export const tokenRevokeInputSchema = z.strictObject({ company_id: uuid, token_id: uuid });
@@ -171,7 +172,8 @@ export type RepositoryInput = z.infer<typeof repositoryInputSchema>;
 export type CompanyCreateInput = z.infer<typeof companyCreateInputSchema>;
 export type EmployeeCreateInput = z.infer<typeof employeeCreateInputSchema>;
 export type ProjectCreateInput = z.infer<typeof projectCreateInputSchema>;
-export type MemberInput = z.infer<typeof memberInputSchema>;
+export type ProjectRemoveInput = z.infer<typeof projectRemoveInputSchema>;
+export type MemberInput =z.infer<typeof memberInputSchema>;
 export type TokenIssueInput = z.infer<typeof tokenIssueInputSchema>;
 export type TokenRevokeInput = z.infer<typeof tokenRevokeInputSchema>;
 
@@ -244,6 +246,11 @@ export interface ProjectCreateOutput {
   project_id: string;
   company_id: string;
   repository_identifier: string;
+}
+
+export interface ProjectRemoveOutput {
+  status: 'removed';
+  project_id: string;
 }
 
 export interface MemberAddOutput {
