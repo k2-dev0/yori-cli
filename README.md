@@ -14,7 +14,7 @@ npx yori-cli collector:install
 - 動作環境はmacOS、Node.js 24以降、`git`。APIは既定で `https://yori-pilot.online`。
 - 初回だけ「Yori tokenを2回入力」と案内してからKeychainの非表示promptを開きます。tokenはKeychainとcollector専用環境変数以外へ保存せず、config・hook・logへ出しません。
 - cwdの`git remote.origin.url`から対象repositoryをcanonical化します。認証なしsetup probeの正規401でAPI互換性を確認してから、Bearer付き`POST /v1/collector/setup`で案件とcurrent伏せ字policyを照合します。旧APIのroute-not-foundは`collector_server_incompatible`です。
-- `~/.codex`が存在すれば、`hooks.json`が未作成または0バイトでも安全な空objectから作成・修復します。Claude Codeは既存`~/.claude/settings.json`を対象にし、`UserPromptSubmit`へ同期notifyと非同期notify-late、`Stop`へ同期collectを追加します。notifyは現在入力を最大3秒待ち、未完了結果はnotify-lateまたは次回入力で一度だけ配信します。どちらも検出できない場合は`agent_not_found`で終了します。
+- `~/.codex`が存在すれば、`hooks.json`が未作成または0バイトでも安全な空objectから作成・修復します。Claude Codeも`~/.claude`が存在すれば、`settings.json`が未作成または0バイトでも同じく空objectから作成・修復し、`UserPromptSubmit`へ同期notifyと非同期notify-late、`Stop`へ同期collectを追加します。notifyは現在入力を最大3秒待ち、未完了結果はnotify-lateまたは次回入力で一度だけ配信します。どちらも検出できない場合は`agent_not_found`で終了します。
 - hookは固定のlocal artifact（`~/.local/share/yori/collector/versions/<version>/`）をstable launcher経由で呼び、npxやlatestへ依存しません。manifestとinstall stateはcollector version・Git SHA・SHA-256 checksumを保持し、同一versionで識別情報が違うartifactは拒否します。
 - 設定は`~/.yori-collector.json`、stateは`~/.yori-collector`、token環境変数は`YORI_COLLECTOR_TOKEN`。
 - `project:add`はcwdのGit remoteを社員tokenの会社へ登録し、新規は`done`、登録済みは`already`を返します。同じ会社の社員は登録済みprojectを共通利用します。
