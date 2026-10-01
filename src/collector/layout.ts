@@ -3,12 +3,10 @@ import { homedir } from 'node:os';
 import path from 'node:path';
 import type { CollectorArtifact } from './artifact.js';
 import {
-  COLLECTOR_BUNDLE_FILE_NAME,
   COLLECTOR_CONFIG_FILE_NAME,
   COLLECTOR_INSTALL_ROOT_PARTS,
   COLLECTOR_INSTALL_STATE_FILE_NAME,
   COLLECTOR_LAUNCHER_FILE_NAME,
-  COLLECTOR_MANIFEST_FILE_NAME,
   COLLECTOR_SECRETS_INDEX_FILE_NAME,
   COLLECTOR_STATE_DIR_NAME,
   COLLECTOR_TOKEN_ENV,
@@ -167,8 +165,8 @@ export async function writeCollectorVersion(home: string, artifact: CollectorArt
   const dir = collectorVersionDir(home, artifact.version);
   await mkdir(dir, { recursive: true, mode: 0o700 });
   await chmod(dir, 0o700);
-  await writeFileAtomic(path.join(dir, COLLECTOR_BUNDLE_FILE_NAME), artifact.bundle, 0o600);
-  await writeFileAtomic(path.join(dir, COLLECTOR_MANIFEST_FILE_NAME), artifact.manifest, 0o600);
+  await writeFileAtomic(path.join(dir, artifact.files.bundle), artifact.bundle, 0o600);
+  await writeFileAtomic(path.join(dir, artifact.files.manifest), artifact.manifest, 0o600);
 }
 
 export async function writeCollectorConfig(home: string, apiUrl: string): Promise<void> {
