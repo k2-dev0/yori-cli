@@ -22,6 +22,7 @@ import {
   employeeCreateInputSchema,
   memberInputSchema,
   projectCreateInputSchema,
+  projectRemoveInputSchema,
   redactionReplaceInputSchema,
   repositoryInputSchema,
   tokenIssueInputSchema,
@@ -39,6 +40,7 @@ import {
   issueToken,
   listRedactionPolicy,
   removeMember,
+  removeProject,
   removeRepository,
   replaceRedactionPolicy,
   revokeToken,
@@ -244,6 +246,8 @@ export async function runCli(argv: string[], env: NodeJS.ProcessEnv = process.en
         return await runInputCommand(env, projectCreateInputSchema, rest, (pool, input) => createProject(pool, input));
       case 'project:add':
         return await runProjectAdd(env, rest);
+      case 'project:remove':
+        return await runInputCommand(env, projectRemoveInputSchema, rest, (pool, input) => removeProject(pool, input));
       case 'me':
       case 'company:show':
         return await runAccountCommand(env, command, rest);
