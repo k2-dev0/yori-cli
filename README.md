@@ -20,14 +20,38 @@ npx yori-cli collector:install
 - `project:add`はcwdのGit remoteを社員tokenの会社へ登録し、新規は`done`、登録済みは`already`を返します。同じ会社の社員は登録済みprojectを共通利用します。
 - `me`は通常tokenで本人・会社・現在token・会社projectを表示します。`company:show`、`employee:add`、`employee:rename`、API版token管理は別Keychain service `online.yori.admin`のcompany admin tokenを使い、通常collector tokenを上書きしません。
 
+### yori MCPの登録
+
+`collector:install`と`collector:update`は、検索結果の原文を取得するためのyori MCPをCodexとClaude Codeへ登録します。MCP導入前にinstallした端末は`collector:update`を1回実行すれば登録されます。
+
+| 対象 | 書き込む場所 | 内容 |
+|---|---|---|
+| Codex | `~/.codex/config.toml`の`[mcp_servers.yori]` | Node.jsとMCP launcherの絶対path、toolごとの`approval_mode` |
+| Claude Code | `~/.claude.json`の`mcpServers.yori` | Node.jsとMCP launcherの絶対path |
+| Claude Code | `~/.claude/settings.json`の`permissions.allow` | 読み取りtool 3件の許可rule（`mcp__yori__<tool>`） |
+
+- 公開toolは`search_history`・`get_search_result`・`get_evidence`・`record_case`・`link_session`の5件です。
+- 読み取り系（`get_search_result`・`get_evidence`・`search_history`）は確認なしで実行できます。書き込み系（`record_case`・`link_session`）は実行前に確認が出ます。Codexは`approval_mode`を読み取り系`approve`・書き込み系`prompt`にし、Claude Codeは書き込み系の許可ruleを書きません。
+- 追加・更新・削除するのはyoriの項目だけです。他のMCP server、hook、設定、`config.toml`のコメントと書式は変更しません。何度実行しても結果は同じで、登録内容が既に正しければfileを書き換えません。
+- `config.toml`でyoriがインラインテーブルなど別の書き方で定義されている場合は、何も変更せず`collector_hook_conflict`で終了します。該当の定義を手で削除してから再実行してください。
+- MCP本体は`~/.local/share/yori/collector/versions/<version>/yori-mcp.mjs`に置き、collectorと同じくversion・Git SHA・SHA-256 checksumを検証します。npxやlatestへは依存しません。
+- 登録後は実行中のCodex・Claude Codeを再起動してください。`codex mcp list`と`claude mcp list`に`yori`が表示されれば登録されています。
+
+tokenの扱い:
+
+- tokenの保存先はcollectorと同じKeychain item（service `online.yori.collector`）だけです。`config.toml`・`~/.claude.json`・`settings.json`・コマンド引数・ログへは書きません。
+- MCP launcher（`~/.local/share/yori/collector/mcp-launcher.mjs`）が起動のたびにKeychainからtokenを読み、接続先URLとともに子MCPの環境変数（`YORI_API_URL`・`YORI_API_TOKEN`）へだけ渡します。`mcp-config.json`にはこの環境変数の名前だけを書きます。
+- 接続先は`~/.yori-collector.json`の`api_url`です。HTTPSだけを許可し、開発時に限りloopback（localhost・127.0.0.1・`::1`）のHTTPを使用できます。
+- Keychainにtokenが無い、または設定を読めない場合、launcherはMCPを起動せず標準エラーへ`mcp: launcher_error`だけを出して終了します。
+
 継続運用:
 
 | コマンド | 用途 |
 |---|---|
-| `npx yori-cli collector:update` | 配布artifactをchecksum検証してから切り替え、旧versionを残す。Keychainとstateは変更しない |
-| `npx yori-cli collector:doctor` | 秘密を含まない診断（install状態、Keychain、setup APIのcurrent policy version、権限）を表示し、状態を変更しない |
+| `npx yori-cli collector:update` | 配布artifactをchecksum検証してから切り替え、旧versionを残す。hookとyori MCPの登録を現在の内容へ揃える。Keychainとstateは変更しない |
+| `npx yori-cli collector:doctor` | 秘密を含まない診断（install状態、Keychain、setup APIのcurrent policy version、権限、yori MCPの登録）を表示し、状態を変更しない |
 | `npx yori-cli collector:backfill [--dry-run] [--source codex\|claude_code\|deepseek_harness]` | 起動時のrepositoryから過去のroot会話を自動発見する。dry-runは本文・pathを出さず件数とversionだけを表示する |
-| `npx yori-cli collector:uninstall` | 追加したhook・config・install rootだけを削除する。Keychainと`~/.yori-collector`は保持し、再installでpromptは出ない |
+| `npx yori-cli collector:uninstall` | 追加したhook・yori MCPの登録と許可rule・config・install rootだけを削除する。Keychainと`~/.yori-collector`は保持し、再installでpromptは出ない |
 
 過去履歴は対象repositoryのrootで実行します。repository pathの引数は不要です。
 
