@@ -2,7 +2,13 @@ import { createHash } from 'node:crypto';
 import { realpathSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
-import { COLLECTOR_BUNDLE_FILE_NAME, COLLECTOR_MANIFEST_FILE_NAME, CollectorFailure } from './contract.js';
+import {
+  COLLECTOR_BUNDLE_FILE_NAME,
+  COLLECTOR_MANIFEST_FILE_NAME,
+  COLLECTOR_MCP_BUNDLE_FILE_NAME,
+  COLLECTOR_MCP_MANIFEST_FILE_NAME,
+  CollectorFailure,
+} from './contract.js';
 
 export interface CollectorArtifact {
   version: string;
@@ -11,6 +17,13 @@ export interface CollectorArtifact {
   // bundleは配置先へそのままcopyし、manifestも検証済み本文をそのまま置く。
   bundle: Buffer;
   manifest: Buffer;
+  // 配置先でも配布時と同じfile名を使う。
+  files: CollectorArtifactFiles;
+}
+
+export interface CollectorArtifactFiles {
+  bundle: string;
+  manifest: string;
 }
 
 // 標準は公開packageのbin隣接dist/collectorだけ。cwdやsource treeの探索はしない。
@@ -33,14 +46,17 @@ function artifactDir(env: NodeJS.ProcessEnv): string {
 }
 
 // artifact本文とmanifestのversion・Git SHA・checksumを検証する。不一致は配置前に拒否する。
-export async function readCollectorArtifact(env: NodeJS.ProcessEnv): Promise<CollectorArtifact> {
+export async function readCollectorArtifact(
+  env: NodeJS.ProcessEnv,
+  files: CollectorArtifactFiles = { bundle: COLLECTOR_BUNDLE_FILE_NAME, manifest: COLLECTOR_MANIFEST_FILE_NAME },
+): Promise<CollectorArtifact> {
   const dir = artifactDir(env);
   let bundle: Buffer;
   let manifestText: string;
   try {
     [bundle, manifestText] = await Promise.all([
-      readFile(path.join(dir, COLLECTOR_BUNDLE_FILE_NAME)),
-      readFile(path.join(dir, COLLECTOR_MANIFEST_FILE_NAME), 'utf8'),
+      readFile(path.join(dir, files.bundle)),
+      readFile(path.join(dir, files.manifest), 'utf8'),
     ]);
   } catch {
     throw new CollectorFailure('collector_artifact_invalid');
@@ -58,7 +74,7 @@ export async function readCollectorArtifact(env: NodeJS.ProcessEnv): Promise<Col
   if (
     typeof candidate.version !== 'string' ||
     !/^[A-Za-z0-9][A-Za-z0-9._+-]*$/.test(candidate.version) ||
-    candidate.file !== COLLECTOR_BUNDLE_FILE_NAME ||
+    candidate.file !== files.bundle ||
     typeof candidate.git_sha !== 'string' ||
     !/^[0-9a-f]{40}$/.test(candidate.git_sha) ||
     typeof candidate.checksum !== 'string' ||
@@ -70,5 +86,10 @@ export async function readCollectorArtifact(env: NodeJS.ProcessEnv): Promise<Col
   if (checksum !== candidate.checksum.toLowerCase()) {
     throw new CollectorFailure('collector_artifact_invalid');
   }
-  return { version: candidate.version, gitSha: candidate.git_sha, checksum, bundle, manifest: Buffer.from(manifestText, 'utf8') };
+  return { version: candidate.version, gitSha: candidate.git_sha, checksum, bundle, manifest: Buffer.from(manifestText, 'utf8'), files };
+}
+
+// MCP artifactはcollectorと同じdirectoryに並び、同じ検証を通す。
+export async function readCollectorMcpArtifact(env: NodeJS.ProcessEnv): Promise<CollectorArtifact> {
+  return readCollectorArtifact(env, { bundle: COLLECTOR_MCP_BUNDLE_FILE_NAME, manifest: COLLECTOR_MCP_MANIFEST_FILE_NAME });
 }
