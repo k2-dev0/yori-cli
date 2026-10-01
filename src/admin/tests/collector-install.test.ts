@@ -276,6 +276,43 @@ describe('collector:install', () => {
     });
   });
 
+  it('~/.claudeが存在すればsettings.json未作成でもClaude Codeを検出して安全なJSONから作成する', async () => {
+    await withCollectorFixture(async (fixture) => {
+      await prepareCollectorInstall(fixture, { agents: [] });
+      await mkdir(path.join(fixture.home, '.claude'), { recursive: true });
+      const run = await runRootCli(fixture, ['collector:install']);
+      const output = parseCollectorSuccess(run);
+      assert.deepEqual(output.agents, ['claude_code']);
+      const settings = JSON.parse(await readText(hookPath(fixture, 'claude_code'))) as Record<string, unknown>;
+      assert.ok('hooks' in settings, '新規settings.jsonへhooksを書いていない');
+      assert.equal((await collectorCommandsFor(fixture, 'claude_code')).length, 3);
+      assert.equal(existsSync(hookPath(fixture, 'codex')), false, '存在しないcodex設定を作成している');
+    });
+  });
+
+  it('~/.claudeがsymlinkならClaude Codeを検出しない', async () => {
+    await withCollectorFixture(async (fixture) => {
+      await prepareCollectorInstall(fixture, { agents: [] });
+      const target = path.join(fixture.root, 'claude-target');
+      await mkdir(target, { recursive: true });
+      await symlink(target, path.join(fixture.home, '.claude'));
+      const run = await runRootCli(fixture, ['collector:install']);
+      assert.equal(run.stderr, 'admin: agent_not_found\n');
+      assert.deepEqual(await listFilesRecursively(target), []);
+    });
+  });
+
+  it('新規作成予定のClaude Code settings.jsonはAPI失敗時に作成しない', async () => {
+    await withCollectorFixture(async (fixture) => {
+      await prepareCollectorInstall(fixture, { agents: ['codex'] });
+      await mkdir(path.join(fixture.home, '.claude'), { recursive: true });
+      await writeApiSpec(fixture, [{ status: 401, body: { error: { code: 'unauthorized' } } }]);
+      const run = await runRootCli(fixture, ['collector:install']);
+      assert.equal(run.stderr, 'admin: collector_unauthorized\n');
+      assert.equal(existsSync(hookPath(fixture, 'claude_code')), false, 'API失敗でClaude Code settings.jsonを残している');
+    });
+  });
+
   it('新規作成予定のCodex hooks.jsonはAPI失敗時に作成しない', async () => {
     await withCollectorFixture(async (fixture) => {
       await prepareCollectorInstall(fixture, { agents: ['claude_code'] });
