@@ -117,7 +117,7 @@ describe('collector:update', () => {
       // update後のinstall.jsonは新collector versionとchecksumへ切り替わり、初回setup policy_versionを保持する。
       const installState = JSON.parse(await readText(path.join(collectorInstallRoot(fixture), 'install.json'))) as Record<string, unknown>;
       const packageJson = JSON.parse(await readText(path.join(REPO_ROOT, 'package.json'))) as { version: string };
-      assert.deepEqual(Object.keys(installState).sort(), ['checksum', 'collector_version', 'git_sha', 'installer_version', 'policy_version']);
+      assert.deepEqual(Object.keys(installState).sort(), ['checksum', 'collector_version', 'git_sha', 'installer_version', 'mcp_checksum', 'policy_version']);
       assert.equal(installState.installer_version, packageJson.version);
       assert.equal(installState.collector_version, V2_VERSION);
       assert.equal(installState.git_sha, DEFAULT_COLLECTOR_GIT_SHA);
