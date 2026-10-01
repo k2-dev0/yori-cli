@@ -8,10 +8,17 @@ import { fileURLToPath } from 'node:url';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const CLI_VERSION = JSON.parse(readFileSync(path.join(REPO_ROOT, 'package.json'), 'utf8')).version;
-const SOURCE_DIR = path.join(path.resolve(REPO_ROOT, process.env.YORI_REPOSITORY ?? '../yori'), 'dist', 'collector');
+// 配布対象。引数なしはcollector、`mcp`はyori MCP。どちらもyori-cliのdist/collectorへ並べる。
+const ARTIFACTS = {
+  collector: { sourceDir: 'collector', bundle: 'yori-collector.mjs', manifest: 'collector-manifest.json' },
+  mcp: { sourceDir: 'mcp', bundle: 'yori-mcp.mjs', manifest: 'mcp-manifest.json' },
+};
+const ARTIFACT_KIND = process.argv[2] ?? 'collector';
+const ARTIFACT = Object.hasOwn(ARTIFACTS, ARTIFACT_KIND) ? ARTIFACTS[ARTIFACT_KIND] : fail(`未知の配布対象です: ${ARTIFACT_KIND}`);
+const SOURCE_DIR = path.join(path.resolve(REPO_ROOT, process.env.YORI_REPOSITORY ?? '../yori'), 'dist', ARTIFACT.sourceDir);
 const OUT_DIR = path.join(REPO_ROOT, 'dist', 'collector');
-const BUNDLE_NAME = 'yori-collector.mjs';
-const MANIFEST_NAME = 'collector-manifest.json';
+const BUNDLE_NAME = ARTIFACT.bundle;
+const MANIFEST_NAME = ARTIFACT.manifest;
 const BUNDLE_PATH = path.join(OUT_DIR, BUNDLE_NAME);
 const MANIFEST_PATH = path.join(OUT_DIR, MANIFEST_NAME);
 
@@ -89,7 +96,7 @@ try {
     }
     throw error;
   }
-  console.log(`collector artifact: dist/collector/${BUNDLE_NAME} v${manifest.version}`);
+  console.log(`${ARTIFACT_KIND} artifact: dist/collector/${BUNDLE_NAME} v${manifest.version}`);
 } catch (error) {
   fail(error instanceof Error ? error.message : 'copyに失敗しました');
 } finally {
