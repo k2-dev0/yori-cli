@@ -273,6 +273,29 @@ export async function writeCollectorArtifact(
   };
   await writeFile(path.join(fixture.artifactDir, 'yori-collector.mjs'), options.content, 'utf8');
   await writeFile(path.join(fixture.artifactDir, 'collector-manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
+  // MCP artifactはcollectorと同じversion・Git SHAで同じdirectoryへ並べる。個別の不一致はwriteMcpArtifactで上書きする。
+  await writeMcpArtifact(fixture, { version: options.version, content: DEFAULT_MCP_BUNDLE, gitSha: options.gitSha });
+}
+
+// launcherが子MCPへ渡したenvと設定fileを、token値を出さずに1行JSONで報告する合成bundle。
+export const DEFAULT_MCP_BUNDLE =
+  "import { readFileSync } from 'node:fs';\n" +
+  "const config = JSON.parse(readFileSync(process.env.YORI_MCP_CONFIG, 'utf8'));\n" +
+  "console.log(JSON.stringify({ marker: 'mcp-fixture-v1', config, api_url: process.env[config.api_url_env] ?? null, " +
+  "token_length: (process.env[config.api_token_env] ?? '').length, argv: process.argv.slice(2) }));\n";
+
+export async function writeMcpArtifact(
+  fixture: CollectorFixture,
+  options: { version: string; content: string; checksum?: string; gitSha?: string },
+): Promise<void> {
+  const manifest = {
+    version: options.version,
+    file: 'yori-mcp.mjs',
+    git_sha: options.gitSha ?? DEFAULT_COLLECTOR_GIT_SHA,
+    checksum: options.checksum ?? sha256Hex(options.content),
+  };
+  await writeFile(path.join(fixture.artifactDir, 'yori-mcp.mjs'), options.content, 'utf8');
+  await writeFile(path.join(fixture.artifactDir, 'mcp-manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
 }
 
 export async function writeApiSpec(
@@ -520,6 +543,7 @@ export async function installCollectorWithoutSetup(fixture: CollectorFixture, co
     collector_version: artifact.version,
     git_sha: artifact.gitSha,
     checksum: artifact.checksum,
+    mcp_checksum: null,
     policy_version: null,
   });
   await commitCollectorHooks(
