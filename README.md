@@ -113,7 +113,8 @@ DATABASE_URL='<database-url>' npm run --silent yori -- <command> [argument]
 | `employee:create <file.json>` | 指定した会社に社員を登録する |
 | `project:create <file.json>` | 指定した会社に案件を登録する |
 | `project:add` | cwdのrepositoryを社員tokenの会社へ登録する（JSON・`DATABASE_URL`不要） |
-| `project:remove <file.json>` | 案件を収集済みデータごと物理削除する（復元不可。詳細は[docs/admin.md](docs/admin.md)） |
+| `project:remove` | cwdのrepositoryの案件を、確認後にcompany admin tokenで収集済みデータごと物理削除する（復元不可。JSON・`DATABASE_URL`不要） |
+| `project:remove <file.json>` | 旧DB管理用。案件を収集済みデータごと物理削除する（確認なし。詳細は[docs/admin.md](docs/admin.md)） |
 | `employee:add <display-name> [--issue-token]` | company admin tokenで会社へ社員を追加し、option指定時はemployee tokenも続けて発行する（JSON・`DATABASE_URL`不要） |
 | `employee:rename <employee-id> <new-display-name>` | company admin tokenで既存社員の表示名を変更する（JSON・`DATABASE_URL`不要） |
 | `member:add <file.json>` | 旧DB管理用。案件に社員を追加する |
@@ -195,6 +196,13 @@ DATABASE_URL='<database-url>' npm run --silent yori -- <command> [argument]
 ```
 
 ### `project:remove`
+
+```text
+入力:     なし（cwdのGit remoteから案件を解決し、確認へ y と答えたときだけ削除する）
+成功出力: { "status": "done", "project_id": "<uuid>" }
+```
+
+### `project:remove <file.json>`
 
 ```text
 入力:     { "company_id": "<uuid>", "project_id": "<uuid>" }
