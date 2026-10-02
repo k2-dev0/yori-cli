@@ -18,7 +18,8 @@ const PROJECT_ID = '01930000-0000-7000-8000-000000000071';
 const EMPLOYEE_ID = '01930000-0000-7000-8000-000000000072';
 const REPOSITORY = 'github.com/example/repo';
 const ADMIN_TOKEN = 'yori_fixture_admin_token_7f3d2a';
-const REMOVAL_WARNING = '収集済みの会話・検索文書・検索履歴をDBからすべて削除します。復元できません。';
+const REMOVAL_WARNING =
+  'This permanently deletes all collected conversations, search documents, and search history from the database. This cannot be undone.';
 
 describe('社員向けproject API CLI', () => {
   it('project:addはcwdのrepositoryをBearer付きで登録し、done/alreadyをそのまま返す', async () => {
@@ -104,7 +105,7 @@ describe('社員向けproject API CLI', () => {
 describe('project:remove（API経由）', () => {
   const setupProjectId = String((DEFAULT_SETUP_RESPONSE.body as { project_id: string }).project_id);
   const setupRepository = String((DEFAULT_SETUP_RESPONSE.body as { repository: string }).repository);
-  const prompt = `削除対象: ${setupRepository} (${setupProjectId})\n${REMOVAL_WARNING}\n本当に削除しますか？ [y/N]: `;
+  const prompt = `Target: ${setupRepository} (${setupProjectId})\n${REMOVAL_WARNING}\nAre you sure you want to delete it? [y/N]: `;
 
   it('yの確認後にcwdのrepositoryの案件をcompany admin tokenでDELETEする', async () => {
     await withCollectorFixture(async (fixture) => {
@@ -117,7 +118,7 @@ describe('project:remove（API経由）', () => {
 
       const run = await runRootCli(fixture, ['project:remove'], { input: 'y\n' });
       assert.equal(run.code, 0, run.stderr);
-      assert.equal(run.stdout, `${JSON.stringify({ status: 'done', project_id: setupProjectId })}\n`);
+      assert.deepEqual(JSON.parse(run.stdout), { status: 'done', project_id: setupProjectId });
       assert.equal(run.stderr, prompt);
       const requests = await readApiRequests(fixture);
       assert.equal(requests.length, 3);
