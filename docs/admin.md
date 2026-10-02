@@ -54,7 +54,7 @@ sudo docker compose -p yori --env-file /etc/yori/yori.env -f deployment/compose.
 - 入力JSONはrepository外のpathでもよく、file pathだけを引数へ渡す。内容はstdout/stderrへ出さない。
 - JSON file契約はDBを扱うadmin commandのもの。collector command（`collector:install`等）はJSON fileを要求せず、`collector:secret:add`の値だけはsecurityの非表示promptまたは`--from-env`から受ける。
 - 入力JSONはunknown fieldを拒否する (`invalid_input`)。
-- 成功時は1行のJSON objectだけをstdoutへ出し、終了コード0で終わる。
+- 成功時はindent付きのJSON objectだけをstdoutへ出し、終了コード0で終わる。本書の成功出力例は1行に詰めて示す。
 - 既知の失敗は `admin: <code>` だけをstderrへ出し、終了コード1で終わる。
 - SQL・接続文字列・入力file本文・token・token hash・DB error本文は、stdout/stderrのどちらにも出さない。
 
@@ -127,7 +127,7 @@ sudo docker compose -p yori --env-file /etc/yori/yori.env -f deployment/compose.
 cwdのrepositoryの案件を物理削除する。DBへ直接接続せず、Keychainのcompany admin tokenでHTTPS APIを呼ぶ（JSON・`DATABASE_URL`不要）。
 
 1. cwdのGit remoteをcanonical repositoryへ解決し、`POST /v1/collector/setup` で案件IDを引く。primary repositoryとaliasのどちらからでも同じ案件へ解決する。
-2. 削除対象のrepositoryと案件ID、復元できない旨の警告（端末では赤文字）をstderrへ出し、`本当に削除しますか？ [y/N]` を尋ねる。
+2. 削除対象のrepositoryと案件ID、復元できない旨の警告（端末では赤文字）をstderrへ出し、`Are you sure you want to delete it? [y/N]` を英語で尋ねる。
 3. stdinの1行目が `y`（大文字小文字は区別しない）のときだけ `DELETE /v1/projects/{project_id}` を呼ぶ。それ以外の入力・入力なしは `project_remove_cancelled` で中止し、何も削除しない。
 
 ```json
