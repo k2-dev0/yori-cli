@@ -13,6 +13,7 @@ export const ADMIN_ERROR_CODES = [
   'employee_not_found',
   'forbidden',
   'project_not_found',
+  'project_remove_cancelled',
   'token_not_found',
   'company_scope_mismatch',
   'repository_conflict',
