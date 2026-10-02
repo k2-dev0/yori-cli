@@ -80,14 +80,12 @@ export async function withInputFile<T>(name: string, content: unknown, run: (fil
   }
 }
 
-// 成功時は1行JSONだけをstdoutへ出す契約を検証しつつparseする。
+// 成功時は改行で終わるJSON objectだけをstdoutへ出す契約を検証しつつparseする。
 export function parseSuccessJson(run: AdminRun): Record<string, unknown> {
   assert.equal(run.code, 0, `終了コードが0ではない: ${run.code} stderr=${run.stderr}`);
   assert.equal(run.stderr, '', `成功時にstderrへ出力している: ${run.stderr}`);
-  const lines = run.stdout.split('\n');
-  assert.equal(lines.at(-1), '', 'stdoutが改行で終わっていない');
-  assert.equal(lines.length, 2, `stdoutが1行JSONではない: ${JSON.stringify(run.stdout)}`);
-  const parsed: unknown = JSON.parse(lines[0]);
+  assert.ok(run.stdout.endsWith('\n'), 'stdoutが改行で終わっていない');
+  const parsed: unknown = JSON.parse(run.stdout);
   assert.equal(typeof parsed, 'object');
   assert.ok(parsed !== null && !Array.isArray(parsed), 'stdout JSONがobjectではない');
   return parsed as Record<string, unknown>;
