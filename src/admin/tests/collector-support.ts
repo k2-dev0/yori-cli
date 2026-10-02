@@ -394,16 +394,15 @@ export async function runRootCli(fixture: CollectorFixture, args: string[], opti
   });
 }
 
-// 成功時は1行JSONだけをstdoutへ出す既存admin CLI契約を検証しつつparseする。
+// 成功時は改行で終わるJSON objectだけをstdoutへ出す既存admin CLI契約を検証しつつparseする。
 export function parseCollectorSuccess(run: CollectorRun): Record<string, unknown> {
   if (run.code !== 0 || run.stderr !== '') {
     throw new Error(`成功を期待したが code=${run.code} stdout=${JSON.stringify(run.stdout)} stderr=${JSON.stringify(run.stderr)}`);
   }
-  const lines = run.stdout.split('\n');
-  if (lines.at(-1) !== '' || lines.length !== 2) {
-    throw new Error(`stdoutが1行JSONではない: ${JSON.stringify(run.stdout)}`);
+  if (!run.stdout.endsWith('\n')) {
+    throw new Error(`stdoutが改行で終わっていない: ${JSON.stringify(run.stdout)}`);
   }
-  const parsed: unknown = JSON.parse(lines[0]);
+  const parsed: unknown = JSON.parse(run.stdout);
   if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
     throw new Error(`stdout JSONがobjectではない: ${JSON.stringify(run.stdout)}`);
   }
