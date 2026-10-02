@@ -101,7 +101,7 @@ DATABASE_URL='<database-url>' npm run --silent yori -- <command> [argument]
 - DB直結の従来管理コマンドは入力をJSONファイルで渡します。社員向けHTTPS APIコマンドはJSONファイルを要求しません。
 - `inspect` は会社IDを引数で渡します。
 - `inspect`・`redaction:list`・`redaction:replace`は`DATABASE_URL`未設定時にSSH alias `yori-production`経由で実行できます。
-- 成功時はstdoutへ1行のJSONを出力し、終了コード `0` で終了します。
+- 成功時はstdoutへindent付きのJSONを出力し、終了コード `0` で終了します。
 - 失敗時はstderrへ `admin: <error-code>` を出力し、終了コード `1` で終了します。
 
 ## コマンド
