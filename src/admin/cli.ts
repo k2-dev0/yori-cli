@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { readFileSync, realpathSync } from 'node:fs';
+import { createInterface } from 'node:readline';
 import { pathToFileURL } from 'node:url';
 import type { Pool } from 'pg';
 import { z } from 'zod';
@@ -10,8 +11,10 @@ import {
   issueTokenViaApi,
   loadCompanyViaApi,
   loadMeViaApi,
+  removeCurrentProject,
   renameEmployeeViaApi,
   revokeTokenViaApi,
+  type ProjectRemovalTarget,
 } from '../collector/account.js';
 import { inspectCompanyOverSsh, listRedactionPolicyOverSsh, replaceRedactionPolicyOverSsh } from './ssh-transport.js';
 import { runCollectorCommand } from '../collector/commands.js';
@@ -187,6 +190,28 @@ async function runProjectAdd(env: NodeJS.ProcessEnv, rest: string[]): Promise<nu
   return result.ok ? succeed(result.value) : fail(result.code);
 }
 
+const ANSI_RED = '\u001b[31m';
+const ANSI_RESET = '\u001b[0m';
+const PROJECT_REMOVAL_WARNING = '収集済みの会話・検索文書・検索履歴をDBからすべて削除します。復元できません。';
+
+// 削除対象と復元不能の警告をstderrへ出し、stdinの1行目がyのときだけ承認する。入力なし・それ以外は中止する。
+async function confirmProjectRemoval(target: ProjectRemovalTarget): Promise<boolean> {
+  const warning = process.stderr.isTTY ? `${ANSI_RED}${PROJECT_REMOVAL_WARNING}${ANSI_RESET}` : PROJECT_REMOVAL_WARNING;
+  process.stderr.write(`削除対象: ${target.repository} (${target.project_id})\n${warning}\n本当に削除しますか？ [y/N]: `);
+  const lines = createInterface({ input: process.stdin });
+  for await (const line of lines) {
+    lines.close();
+    return line.trim().toLowerCase() === 'y';
+  }
+  return false;
+}
+
+// 引数なしのproject:removeはcwdのrepositoryの案件を、確認後にcompany admin tokenでHTTPS API経由で削除する。
+async function runProjectRemove(env: NodeJS.ProcessEnv): Promise<number> {
+  const result = await removeCurrentProject(env, process.cwd(), confirmProjectRemoval);
+  return result.ok ? succeed(result.value) : fail(result.code);
+}
+
 async function runAccountCommand(env: NodeJS.ProcessEnv, command: 'me' | 'company:show', rest: string[]): Promise<number> {
   if (rest.length !== 0) return fail('invalid_arguments');
   const result = command === 'me' ? await loadMeViaApi(env) : await loadCompanyViaApi(env);
@@ -247,7 +272,9 @@ export async function runCli(argv: string[], env: NodeJS.ProcessEnv = process.en
       case 'project:add':
         return await runProjectAdd(env, rest);
       case 'project:remove':
-        return await runInputCommand(env, projectRemoveInputSchema, rest, (pool, input) => removeProject(pool, input));
+        return rest.length === 0
+          ? await runProjectRemove(env)
+          : await runInputCommand(env, projectRemoveInputSchema, rest, (pool, input) => removeProject(pool, input));
       case 'me':
       case 'company:show':
         return await runAccountCommand(env, command, rest);
