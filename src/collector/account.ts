@@ -1,7 +1,8 @@
 import { z } from 'zod';
 import type { AdminErrorCode, AdminResult } from '../admin/contract.js';
-import { loadCollectorApiUrl } from './api.js';
+import { loadCollectorApiUrl, requestCollectorSetup } from './api.js';
 import { CollectorFailure, isSupportedCollectorPlatform } from './contract.js';
+import { resolveRepositoryFromCwd } from './git.js';
 import {
   deleteAdminKeychainToken,
   deleteKeychainToken,
@@ -48,6 +49,7 @@ const issueResponseSchema = z.strictObject({
   token: z.string().regex(/^yori_[A-Za-z0-9_-]+$/),
 });
 const revokeResponseSchema = z.strictObject({ status: z.enum(['done', 'already']), token_id: z.uuid() });
+const projectRemovalResponseSchema = z.strictObject({ status: z.literal('done'), project_id: z.uuid() });
 const accountErrorSchema = z.strictObject({
   error: z.strictObject({ code: z.enum(['invalid_request', 'unauthorized', 'forbidden', 'not_found', 'conflict', 'internal_error']) }),
 });
@@ -59,6 +61,11 @@ export type MemberCreateOutput = z.infer<typeof memberCreateResponseSchema>;
 export type EmployeeRenameOutput = z.infer<typeof employeeRenameResponseSchema>;
 export type TokenIssueOutput = z.infer<typeof issueResponseSchema>;
 export type TokenRevokeOutput = z.infer<typeof revokeResponseSchema>;
+export type ProjectRemovalOutput = z.infer<typeof projectRemovalResponseSchema>;
+export interface ProjectRemovalTarget {
+  project_id: string;
+  repository: string;
+}
 export interface MemberCreateWithTokenOutput {
   status: 'done';
   employee_id: string;
@@ -253,4 +260,23 @@ export async function revokeTokenViaApi(env: NodeJS.ProcessEnv, tokenId: string)
       ),
     ),
   );
+}
+
+// cwdのrepositoryを案件へ解決し、confirmがtrueを返したときだけcompany admin tokenで物理削除する。
+export async function removeCurrentProject(
+  env: NodeJS.ProcessEnv,
+  cwd: string,
+  confirm: (target: ProjectRemovalTarget) => Promise<boolean>,
+): Promise<AdminResult<ProjectRemovalOutput>> {
+  return accountResult(() => {
+    const repository = resolveRepositoryFromCwd(env, cwd);
+    return withAccountToken(env, true, async (apiUrl, token) => {
+      const target = await requestCollectorSetup(apiUrl, token, repository);
+      if (!(await confirm({ project_id: target.project_id, repository: target.repository }))) {
+        throw new CollectorFailure('project_remove_cancelled');
+      }
+      const path = `/v1/projects/${target.project_id}`;
+      return requestJson(apiUrl, token, path, { method: 'DELETE' }, 200, projectRemovalResponseSchema, 'project_not_found', 'internal_error');
+    });
+  });
 }
