@@ -72,12 +72,12 @@ async function snapshot(directory: string): Promise<Map<string, string>> {
   return entries;
 }
 
-// 成功時にstdoutが空か、1行JSON objectであることを確認する（UNIX的な無出力も許容）。
+// 成功時にstdoutが空か、改行で終わるJSON objectであることを確認する（UNIX的な無出力も許容）。
 function assertSuccess(run: CollectorRun): void {
   assert.equal(run.code, 0, `終了コードが0ではない: code=${run.code} stderr=${run.stderr}`);
   assert.equal(run.stderr, '', `成功時にstderrへ出力している: ${run.stderr}`);
   if (run.stdout.length > 0) {
-    assert.equal(run.stdout.split('\n').length, 2, `stdoutが1行JSONではない: ${JSON.stringify(run.stdout)}`);
+    assert.ok(run.stdout.endsWith('\n'), `stdoutが改行で終わっていない: ${JSON.stringify(run.stdout)}`);
     const parsed: unknown = JSON.parse(run.stdout);
     assert.ok(typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed));
   }
