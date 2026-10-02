@@ -3,6 +3,8 @@ import { writeFile } from 'node:fs/promises';
 import { describe, it } from 'node:test';
 import {
   DEFAULT_API_URL,
+  DEFAULT_COMPATIBILITY_RESPONSE,
+  DEFAULT_SETUP_RESPONSE,
   DEFAULT_TOKEN,
   keychainToken,
   parseCollectorSuccess,
@@ -15,6 +17,8 @@ import {
 const PROJECT_ID = '01930000-0000-7000-8000-000000000071';
 const EMPLOYEE_ID = '01930000-0000-7000-8000-000000000072';
 const REPOSITORY = 'github.com/example/repo';
+const ADMIN_TOKEN = 'yori_fixture_admin_token_7f3d2a';
+const REMOVAL_WARNING = '収集済みの会話・検索文書・検索履歴をDBからすべて削除します。復元できません。';
 
 describe('社員向けproject API CLI', () => {
   it('project:addはcwdのrepositoryをBearer付きで登録し、done/alreadyをそのまま返す', async () => {
@@ -94,5 +98,64 @@ describe('社員向けproject API CLI', () => {
         assert.ok(!run.stderr.includes('RAW_MARKER'));
       });
     }
+  });
+});
+
+describe('project:remove（API経由）', () => {
+  const setupProjectId = String((DEFAULT_SETUP_RESPONSE.body as { project_id: string }).project_id);
+  const setupRepository = String((DEFAULT_SETUP_RESPONSE.body as { repository: string }).repository);
+  const prompt = `削除対象: ${setupRepository} (${setupProjectId})\n${REMOVAL_WARNING}\n本当に削除しますか？ [y/N]: `;
+
+  it('yの確認後にcwdのrepositoryの案件をcompany admin tokenでDELETEする', async () => {
+    await withCollectorFixture(async (fixture) => {
+      await writeFile(fixture.adminKeychainPath, ADMIN_TOKEN, 'utf8');
+      await writeApiSpec(
+        fixture,
+        [DEFAULT_COMPATIBILITY_RESPONSE, DEFAULT_SETUP_RESPONSE, { status: 200, body: { status: 'done', project_id: setupProjectId } }],
+        { includeCompatibilityProbe: false },
+      );
+
+      const run = await runRootCli(fixture, ['project:remove'], { input: 'y\n' });
+      assert.equal(run.code, 0, run.stderr);
+      assert.equal(run.stdout, `${JSON.stringify({ status: 'done', project_id: setupProjectId })}\n`);
+      assert.equal(run.stderr, prompt);
+      const requests = await readApiRequests(fixture);
+      assert.equal(requests.length, 3);
+      assert.equal(requests[1].url, `${DEFAULT_API_URL}/v1/collector/setup`);
+      assert.equal(requests[1].authorization, `Bearer ${ADMIN_TOKEN}`);
+      assert.equal(requests[2].url, `${DEFAULT_API_URL}/v1/projects/${setupProjectId}`);
+      assert.equal(requests[2].method, 'DELETE');
+      assert.equal(requests[2].authorization, `Bearer ${ADMIN_TOKEN}`);
+      assert.equal(requests[2].body, null);
+    });
+  });
+
+  it('y以外の入力と入力なしはDELETEを送らずproject_remove_cancelledで中止する', async () => {
+    for (const input of ['n\n', '\n', 'yes\n', '']) {
+      await withCollectorFixture(async (fixture) => {
+        await writeFile(fixture.adminKeychainPath, ADMIN_TOKEN, 'utf8');
+        await writeApiSpec(fixture, [DEFAULT_SETUP_RESPONSE]);
+
+        const run = await runRootCli(fixture, ['project:remove'], { input });
+        assert.equal(run.code, 1);
+        assert.equal(run.stdout, '');
+        assert.equal(run.stderr, `${prompt}admin: project_remove_cancelled\n`);
+        const requests = await readApiRequests(fixture);
+        assert.equal(requests.length, 2, 'setup以外のrequestを送っている');
+        assert.ok(requests.every((request) => request.method !== 'DELETE'));
+      });
+    }
+  });
+
+  it('未登録repositoryは確認を出さずproject_not_foundで終了する', async () => {
+    await withCollectorFixture(async (fixture) => {
+      await writeFile(fixture.adminKeychainPath, ADMIN_TOKEN, 'utf8');
+      await writeApiSpec(fixture, [{ status: 404, body: { error: { code: 'not_found' } } }]);
+
+      const run = await runRootCli(fixture, ['project:remove'], { input: 'y\n' });
+      assert.equal(run.code, 1);
+      assert.equal(run.stdout, '');
+      assert.equal(run.stderr, 'admin: project_not_found\n');
+    });
   });
 });
