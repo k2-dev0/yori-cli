@@ -57,9 +57,11 @@ function fail(code: AdminErrorCode): number {
   return 1;
 }
 
-// 成功時は1行のJSON objectだけをstdoutへ出す。
+const JSON_INDENT_SPACES = 2;
+
+// 成功時はindent付きのJSON objectだけをstdoutへ出す。
 function succeed(value: unknown): number {
-  process.stdout.write(`${JSON.stringify(value)}\n`);
+  process.stdout.write(`${JSON.stringify(value, null, JSON_INDENT_SPACES)}\n`);
   return 0;
 }
 
@@ -192,12 +194,13 @@ async function runProjectAdd(env: NodeJS.ProcessEnv, rest: string[]): Promise<nu
 
 const ANSI_RED = '\u001b[31m';
 const ANSI_RESET = '\u001b[0m';
-const PROJECT_REMOVAL_WARNING = '収集済みの会話・検索文書・検索履歴をDBからすべて削除します。復元できません。';
+const PROJECT_REMOVAL_WARNING =
+  'This permanently deletes all collected conversations, search documents, and search history from the database. This cannot be undone.';
 
 // 削除対象と復元不能の警告をstderrへ出し、stdinの1行目がyのときだけ承認する。入力なし・それ以外は中止する。
 async function confirmProjectRemoval(target: ProjectRemovalTarget): Promise<boolean> {
   const warning = process.stderr.isTTY ? `${ANSI_RED}${PROJECT_REMOVAL_WARNING}${ANSI_RESET}` : PROJECT_REMOVAL_WARNING;
-  process.stderr.write(`削除対象: ${target.repository} (${target.project_id})\n${warning}\n本当に削除しますか？ [y/N]: `);
+  process.stderr.write(`Target: ${target.repository} (${target.project_id})\n${warning}\nAre you sure you want to delete it? [y/N]: `);
   const lines = createInterface({ input: process.stdin });
   for await (const line of lines) {
     lines.close();
