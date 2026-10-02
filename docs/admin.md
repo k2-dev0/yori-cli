@@ -122,6 +122,22 @@ sudo docker compose -p yori --env-file /etc/yori/yori.env -f deployment/compose.
 
 同じ会社で同じcanonical identifierの案件が既にある場合は `repository_conflict`。既存案件は変更しない。
 
+### `project:remove`
+
+cwdのrepositoryの案件を物理削除する。DBへ直接接続せず、Keychainのcompany admin tokenでHTTPS APIを呼ぶ（JSON・`DATABASE_URL`不要）。
+
+1. cwdのGit remoteをcanonical repositoryへ解決し、`POST /v1/collector/setup` で案件IDを引く。primary repositoryとaliasのどちらからでも同じ案件へ解決する。
+2. 削除対象のrepositoryと案件ID、復元できない旨の警告（端末では赤文字）をstderrへ出し、`本当に削除しますか？ [y/N]` を尋ねる。
+3. stdinの1行目が `y`（大文字小文字は区別しない）のときだけ `DELETE /v1/projects/{project_id}` を呼ぶ。それ以外の入力・入力なしは `project_remove_cancelled` で中止し、何も削除しない。
+
+```json
+{"status":"done","project_id":"<uuid>"}
+```
+
+- 所属・repository alias・収集済みの会話・検索文書・検索履歴は外部キーの `ON DELETE CASCADE` で同時に消え、復元できない。社員・token・会社のredaction policyは変更しない。
+- 社員tokenは `forbidden`。未登録repository・他社の案件は `project_not_found`。
+- 削除後はそのrepositoryを案件へ解決できず、新規収集は止まる。社員端末に残る未送信分はAPIが403で拒否し、collectorは恒久失敗として保持する。
+
 ### `project:remove <file.json>`
 
 ```json
@@ -132,11 +148,7 @@ sudo docker compose -p yori --env-file /etc/yori/yori.env -f deployment/compose.
 {"status":"removed","project_id":"<uuid>"}
 ```
 
-案件を物理削除する。所属・repository alias・収集済みの会話・検索文書・検索履歴は外部キーの `ON DELETE CASCADE` で同じtransaction内に消え、復元できない。確認promptは出さない。
-
-- 案件は入力会社のscope内で解決し、他社・存在しない・削除済みの案件は `project_not_found`。
-- 削除後はそのrepositoryを案件へ解決できず、新規収集は止まる。社員端末に残る未送信分はAPIが403で拒否し、collectorは恒久失敗として保持する。
-- 社員・token・会社のredaction policyは変更しない。
+引数ありはDBへ直接接続する形で、`DATABASE_URL` が必要。本番server内のCompose実行用であり、確認promptは出さない。削除範囲は引数なしの形と同じ。案件は入力会社のscope内で解決し、他社・存在しない・削除済みの案件は `project_not_found`。
 
 ### `employee:add <display-name> [--issue-token]`
 
@@ -329,6 +341,7 @@ repositoryはUTF-8で1024バイト以内。host小文字・先頭slashなし・�
 | `company_not_found` | 指定会社が存在しない |
 | `employee_not_found` | 指定社員が存在しない |
 | `project_not_found` | 指定案件が入力会社のscope内に存在しない、またはcollector setup APIが404を返した |
+| `project_remove_cancelled` | 引数なしの `project:remove` の確認へ `y` 以外を答えた、または入力が無かった |
 | `token_not_found` | 指定tokenが存在しない |
 | `company_scope_mismatch` | 対象が別会社に属する |
 | `repository_conflict` | 同じ会社に同じcanonical identifierの案件が存在する、またはprimary repository・既存aliasと衝突する |
