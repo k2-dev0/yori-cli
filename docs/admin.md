@@ -36,11 +36,12 @@ DATABASE_URL='<test-or-development-database-url>' npm run --silent yori -- inspe
 
 ### Compose (tools profile)
 
-yori本体のmigration完了後、本番server `yori-production` の `/srv/yori` でtools profileの `migrate` serviceを一時Node環境として借りる。remote composeに `cli` serviceは無いため、migrationは実行せず `migrate` のentrypointとcommandだけを `npx` へ上書きする。`DATABASE_URL` 未設定時の `inspect` / `redaction:replace` / `redaction:list` がssh transportで組み立てるcommandも同じ形である。
+yori本体のmigration完了後、本番server `yori-production` の `/srv/yori` でtools profileの `migrate` serviceを一時Node環境として借りる。remote composeに `cli` serviceは無いため、migrationは実行せず `migrate` のentrypointとcommandだけを `npx` へ上書きする。`DATABASE_URL` 未設定時の `inspect` / `usage` / `redaction:replace` / `redaction:list` がssh transportで組み立てるcommandも同じ形である。composeは`YORI_RELEASE_SHA`を必須にしているが、`sudo`は既定で環境変数を引き継がないため、`export`ではなく`sudo env`でsudoの内側から渡す。
 
 ```sh
 cd /srv/yori
-sudo docker compose -p yori --env-file /etc/yori/yori.env -f deployment/compose.yaml --profile tools run --rm --no-deps -T \
+YORI_RELEASE_SHA="$(git rev-parse --verify 'HEAD^{commit}')"
+sudo env YORI_RELEASE_SHA="$YORI_RELEASE_SHA" docker compose -p yori --env-file /etc/yori/yori.env -f deployment/compose.yaml --profile tools run --rm --no-deps -T \
   --entrypoint npx migrate --yes --package=yori-cli@<package version> yori inspect <company-uuid>
 ```
 
