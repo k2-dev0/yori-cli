@@ -158,6 +158,41 @@ describe('admin commandのmacOS SSH transport', () => {
     assert.equal(invalid.run.stdout, '');
   });
 
+  it('usageをSSHへ委ね、要求した会社・期間のstrictな応答だけを返す', async () => {
+    const remote = {
+      status: 'ok',
+      company_id: COMPANY_ID,
+      days: 3,
+      since: '2026-09-30T00:00:00.000Z',
+      usd_per_million_input_tokens: { jev: 0.042, voyage_direct: 0.02 },
+      daily: [{ utc_date: '2026-10-01', provider: 'jev', calls: 2, failed: 0, input_tokens: 1000, cost_usd: 0.000042 }],
+      operations: [{ provider: 'jev', operation: 'route_search', calls: 2, failed: 0, input_tokens: 1000, cost_usd: 0.000042, duration_ms_p50: 190, duration_ms_p90: 450 }],
+      jobs: [{ kind: 'route_search', completed: 2, jev_cost_usd_per_job: 0.000021, wait_ms_p50: 0, wait_ms_p90: 10, run_ms_p50: 190, run_ms_p90: 450 }],
+      auto_search: { completed: 0, within_notify_wait_ratio: null, duration_ms_p50: null, duration_ms_p90: null },
+    };
+    const { run, stdin, invocationCount } = await runTransport(['usage', COMPANY_ID, '--days', '3'], {
+      response: { stdout: `${JSON.stringify(remote)}\n` },
+    });
+    assert.equal(run.code, 0, `usage SSHが失敗した: ${run.stderr}`);
+    assert.deepEqual(JSON.parse(run.stdout), remote);
+    assert.equal(invocationCount, 1);
+    assertComposeContract(stdin);
+    assert.ok(stdin.includes(`'usage' '${COMPANY_ID}' '--days' '3'`), `remote usage invocationがない: ${stdin}`);
+
+    // 引数検証はSSH起動より先に行う。
+    const invalidArguments = await runTransport(['usage', COMPANY_ID, '--days', '0']);
+    assert.equal(invalidArguments.run.stderr, 'admin: invalid_arguments\n');
+    assert.equal(invalidArguments.invocationCount, 0, 'usageが引数検証より先にsshを起動している');
+
+    // 別会社・別期間・契約外の応答は成功として返さない。
+    for (const response of [{ ...remote, company_id: OTHER_COMPANY_ID }, { ...remote, days: 7 }, { ...remote, unexpected: true }]) {
+      const rejected = await runTransport(['usage', COMPANY_ID, '--days', '3'], { response: { stdout: `${JSON.stringify(response)}\n` } });
+      assert.equal(rejected.run.code, 1);
+      assert.equal(rejected.run.stderr, 'admin: internal_error\n');
+      assert.equal(rejected.run.stdout, '');
+    }
+  });
+
   it('redaction:replaceのpolicy textは0600一時fileとssh stdin scriptだけへ置き、argv・stdout・stderrへ出さない', async () => {
     const input = {
       company_id: COMPANY_ID,
