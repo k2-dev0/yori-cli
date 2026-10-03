@@ -68,7 +68,7 @@ function assertRemoteReferencesExist(stdin: string): void {
   const composeLine = composeLines[0] as string;
   assert.match(
     composeLine,
-    /^sudo docker compose -p yori --env-file \/etc\/yori\/yori\.env -f deployment\/compose\.yaml --profile tools run --rm --no-deps -T /,
+    /^sudo env YORI_RELEASE_SHA="\$YORI_RELEASE_SHA" docker compose -p yori --env-file \/etc\/yori\/yori\.env -f deployment\/compose\.yaml --profile tools run --rm --no-deps -T /,
     `既知のcompose commandではない: ${JSON.stringify(composeLine)}`,
   );
   const afterRun = composeLine.replace(/^.*run --rm --no-deps -T /, '');
@@ -89,8 +89,10 @@ function assertRemoteReferencesExist(stdin: string): void {
 function assertComposeContract(stdin: string): void {
   assert.ok(stdin.includes('cd /srv/yori'), `cd /srv/yoriがない: ${JSON.stringify(stdin)}`);
   const cdIndex = stdin.indexOf('cd /srv/yori');
-  const releaseShaIndex = stdin.indexOf('export YORI_RELEASE_SHA="$(git rev-parse --verify \'HEAD^{commit}\')"');
-  const composeIndex = stdin.indexOf('sudo docker compose');
+  // sudoは環境変数を引き継がないので、exportした値に頼らずsudoの内側でcomposeへ渡す。
+  assert.ok(!stdin.includes('export YORI_RELEASE_SHA'), `sudoで消えるexportにrelease SHAを頼っている: ${JSON.stringify(stdin)}`);
+  const releaseShaIndex = stdin.indexOf('YORI_RELEASE_SHA="$(git rev-parse --verify \'HEAD^{commit}\')"');
+  const composeIndex = stdin.indexOf('sudo env YORI_RELEASE_SHA="$YORI_RELEASE_SHA" docker compose');
   assert.ok(releaseShaIndex > cdIndex, `repository移動後のYORI_RELEASE_SHA解決がない: ${JSON.stringify(stdin)}`);
   assert.ok(composeIndex > releaseShaIndex, `YORI_RELEASE_SHA解決前にcomposeを起動している: ${JSON.stringify(stdin)}`);
   assert.ok(stdin.includes('/etc/yori/yori.env'), `env fileがない: ${JSON.stringify(stdin)}`);
