@@ -1,8 +1,12 @@
 import type { Pool, PoolClient } from 'pg';
 import { v7 as uuidv7 } from 'uuid';
 import {
+  AUTO_SEARCH_NOTIFY_WAIT_MS,
   BOOTSTRAP_LOCK_KEY,
   TOKEN_HASH_RETRY_LIMIT,
+  TOKENS_PER_PRICE_UNIT,
+  USD_PER_MILLION_INPUT_TOKENS,
+  type UsageOutput,
   type AdminResult,
   type BootstrapInput,
   type BootstrapOutput,
@@ -45,6 +49,10 @@ const TOKEN_HASH_CONSTRAINT = 'auth_tokens_token_hash_key';
 const REQUIRED_MIGRATION = '0001_init.sql';
 const REDACTION_MIGRATION = '0010_custom_redaction.sql';
 const AUTH_TOKEN_SCOPE_MIGRATION = '0013_auth_token_scope.sql';
+// usageが読むjobs.started_atとusage_events.job_idを足したyori本体のmigration。
+const USAGE_MIGRATION = '0021_job_timing_usage_job.sql';
+const JEV_PROVIDER = 'jev';
+const MS_PER_SECOND = 1_000;
 const REDACTION_DETECTOR_VERSION = 'initial-v1';
 
 // PostgreSQLの一意制約違反だけを対象にする。他のDB障害を再生成や成功扱いで隠さない。
@@ -468,6 +476,80 @@ export async function inspectCompany(pool: Pool, companyId: string): Promise<Adm
       },
     };
   });
+}
+
+// 日・providerごとの外部呼出し。$3/$4は単価表、$5は単価の基準token数。単価の無いproviderの費用はNULL。
+const USAGE_DAILY_SQL = `
+  SELECT to_char(u.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS utc_date, u.provider, count(*)::int AS calls,
+         (count(*) FILTER (WHERE NOT u.success))::int AS failed, COALESCE(sum(u.input_tokens), 0)::float8 AS input_tokens,
+         COALESCE(sum(u.input_tokens), 0)::float8 * max(price.usd) / $5 AS cost_usd
+    FROM usage_events u LEFT JOIN unnest($3::text[], $4::float8[]) AS price(provider, usd) ON price.provider = u.provider
+   WHERE u.company_id = $1 AND u.created_at >= $2
+   GROUP BY 1, 2 ORDER BY 1, 2`;
+
+// provider・処理ごとの外部呼出しと所要時間の中央値・90%点。引数はUSAGE_DAILY_SQLと同じ。
+const USAGE_OPERATIONS_SQL = `
+  SELECT u.provider, u.operation, count(*)::int AS calls, (count(*) FILTER (WHERE NOT u.success))::int AS failed,
+         COALESCE(sum(u.input_tokens), 0)::float8 AS input_tokens, COALESCE(sum(u.input_tokens), 0)::float8 * max(price.usd) / $5 AS cost_usd,
+         percentile_cont(0.5) WITHIN GROUP (ORDER BY u.duration_ms) AS duration_ms_p50,
+         percentile_cont(0.9) WITHIN GROUP (ORDER BY u.duration_ms) AS duration_ms_p90
+    FROM usage_events u LEFT JOIN unnest($3::text[], $4::float8[]) AS price(provider, usd) ON price.provider = u.provider
+   WHERE u.company_id = $1 AND u.created_at >= $2
+   GROUP BY 1, 2 ORDER BY 1, 2`;
+
+// 完了したjobの種別ごとの待ち（作成→開始）と処理時間（開始→完了）。$3はJevの単価、$4は基準token数、$5は1秒のms。
+const USAGE_JOBS_SQL = `
+  SELECT j.kind, count(*)::int AS completed, COALESCE(sum(c.input_tokens), 0)::float8 * $3 / $4 / count(*) AS jev_cost_usd_per_job,
+         percentile_cont(0.5) WITHIN GROUP (ORDER BY extract(epoch FROM j.started_at - j.created_at) * $5) AS wait_ms_p50,
+         percentile_cont(0.9) WITHIN GROUP (ORDER BY extract(epoch FROM j.started_at - j.created_at) * $5) AS wait_ms_p90,
+         percentile_cont(0.5) WITHIN GROUP (ORDER BY extract(epoch FROM j.updated_at - j.started_at) * $5) AS run_ms_p50,
+         percentile_cont(0.9) WITHIN GROUP (ORDER BY extract(epoch FROM j.updated_at - j.started_at) * $5) AS run_ms_p90
+    FROM jobs j JOIN sessions s ON s.id = j.session_id JOIN projects p ON p.id = s.project_id
+    LEFT JOIN LATERAL (SELECT sum(u.input_tokens) AS input_tokens FROM usage_events u WHERE u.job_id = j.id AND u.provider = $6) c ON true
+   WHERE p.company_id = $1 AND j.status = 'completed' AND j.started_at >= $2
+   GROUP BY j.kind ORDER BY j.kind`;
+
+// 完了した自動検索の受付から完了まで。$3は1秒のms、$4は入力時のhookが待つ上限のms。
+const USAGE_AUTO_SEARCH_SQL = `
+  SELECT count(*)::int AS completed, avg((extract(epoch FROM r.updated_at - r.created_at) * $3 <= $4)::int)::float8 AS within_notify_wait_ratio,
+         percentile_cont(0.5) WITHIN GROUP (ORDER BY extract(epoch FROM r.updated_at - r.created_at) * $3) AS duration_ms_p50,
+         percentile_cont(0.9) WITHIN GROUP (ORDER BY extract(epoch FROM r.updated_at - r.created_at) * $3) AS duration_ms_p90
+    FROM search_requests r
+   WHERE r.company_id = $1 AND r.trigger = 'auto' AND r.status = 'completed' AND r.created_at >= $2`;
+
+// 外部呼出しの費用・所要時間と、jobと自動検索の所要時間を会社scopeで集計する。原文・tokenは読まない。
+export async function reportCompanyUsage(pool: Pool, companyId: string, days: number): Promise<AdminResult<UsageOutput>> {
+  return withTransaction(
+    pool,
+    async (client) => {
+      const company = await client.query<{ since: Date }>('SELECT now() - make_interval(days => $2) AS since FROM companies WHERE id = $1', [companyId, days]);
+      const since = company.rows[0]?.since;
+      if (since === undefined) {
+        return { ok: false, code: 'company_not_found' };
+      }
+      const prices = [Object.keys(USD_PER_MILLION_INPUT_TOKENS), Object.values(USD_PER_MILLION_INPUT_TOKENS), TOKENS_PER_PRICE_UNIT];
+      const daily = await client.query<UsageOutput['daily'][number]>(USAGE_DAILY_SQL, [companyId, since, ...prices]);
+      const operations = await client.query<UsageOutput['operations'][number]>(USAGE_OPERATIONS_SQL, [companyId, since, ...prices]);
+      const jobParams = [companyId, since, USD_PER_MILLION_INPUT_TOKENS[JEV_PROVIDER], TOKENS_PER_PRICE_UNIT, MS_PER_SECOND, JEV_PROVIDER];
+      const jobs = await client.query<UsageOutput['jobs'][number]>(USAGE_JOBS_SQL, jobParams);
+      const searchParams = [companyId, since, MS_PER_SECOND, AUTO_SEARCH_NOTIFY_WAIT_MS];
+      const autoSearch = await client.query<UsageOutput['auto_search']>(USAGE_AUTO_SEARCH_SQL, searchParams);
+      // 集計関数だけの問合せなので、自動検索は対象が0件でも必ず1行返る。
+      const value: UsageOutput = {
+        status: 'ok',
+        company_id: companyId,
+        days,
+        since: since.toISOString(),
+        usd_per_million_input_tokens: { ...USD_PER_MILLION_INPUT_TOKENS },
+        daily: daily.rows,
+        operations: operations.rows,
+        jobs: jobs.rows,
+        auto_search: autoSearch.rows[0] as UsageOutput['auto_search'],
+      };
+      return { ok: true, value };
+    },
+    [REQUIRED_MIGRATION, USAGE_MIGRATION],
+  );
 }
 
 // 検証済みpolicyのfield/termを0010の正規化規則で保存する。
