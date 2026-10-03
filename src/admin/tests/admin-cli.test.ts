@@ -420,6 +420,90 @@ describe('個別コマンド', () => {
   });
 });
 
+describe('usage', () => {
+  const insertUsage = (companyId: string, values: { provider: string; operation: string; tokens: number | null; ms: number; success?: boolean; ago?: string; jobId?: string }) =>
+    pool.query(
+      `INSERT INTO usage_events (id, company_id, provider, operation, input_tokens, duration_ms, success, created_at, job_id)
+       VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, now() - $7::interval, $8)`,
+      [companyId, values.provider, values.operation, values.tokens, values.ms, values.success ?? true, values.ago ?? '1 second', values.jobId ?? null],
+    );
+
+  it('usageは会社scopeの外部呼出しの費用と、jobと自動検索の所要時間を返す', async () => {
+    const companyId = await createCompany('usage');
+    const projectId = str((await createProject(companyId, 'github.com/example/usage')).project_id);
+    const sessionId = (await pool.query<{ id: string }>('INSERT INTO sessions (id, project_id) VALUES (gen_random_uuid(), $1) RETURNING id', [projectId])).rows[0].id;
+    const jobId = (
+      await pool.query<{ id: string }>(
+        `INSERT INTO jobs (id, kind, status, session_id, created_at, started_at, updated_at)
+         VALUES (gen_random_uuid(), 'classify_message', 'completed', $1, now() - interval '10 seconds', now() - interval '8 seconds', now() - interval '5 seconds')
+         RETURNING id`,
+        [sessionId],
+      )
+    ).rows[0].id;
+    await insertUsage(companyId, { provider: 'jev', operation: 'classify_message', tokens: 1_000_000, ms: 200, jobId });
+    await insertUsage(companyId, { provider: 'jev', operation: 'classify_message', tokens: null, ms: 400, success: false, jobId });
+    await insertUsage(companyId, { provider: 'voyage_direct', operation: 'document', tokens: 500_000, ms: 300 });
+    // 集計期間より古い呼出しと、別会社の呼出しは数えない。
+    await insertUsage(companyId, { provider: 'jev', operation: 'classify_message', tokens: 9_000_000, ms: 100, ago: '8 days' });
+    const otherCompany = await createCompany('usage-other');
+    await insertUsage(otherCompany, { provider: 'jev', operation: 'classify_message', tokens: 7_000_000, ms: 100 });
+    for (const [created, updated] of [['3 seconds', '1 second'], ['30 seconds', '0 seconds']]) {
+      await pool.query(
+        `INSERT INTO search_requests (id, company_id, trigger, status, created_at, updated_at)
+         VALUES (gen_random_uuid(), $1, 'auto', 'completed', now() - $2::interval, now() - $3::interval)`,
+        [companyId, created, updated],
+      );
+    }
+
+    const output = parseSuccessJson(await runAdmin(['usage', companyId]));
+    assert.equal(output.status, 'ok');
+    assert.equal(output.company_id, companyId);
+    assert.equal(output.days, 7);
+    assert.deepEqual(output.usd_per_million_input_tokens, { jev: 0.042, voyage_direct: 0.02 });
+    const daily = list(output.daily).map(record);
+    assert.deepEqual(
+      daily.map((row) => [row.provider, row.calls, row.failed, row.input_tokens]),
+      [
+        ['jev', 2, 1, 1_000_000],
+        ['voyage_direct', 1, 0, 500_000],
+      ],
+    );
+    assert.ok(Math.abs(Number(daily[0].cost_usd) - 0.042) < 1e-9, `Jevの費用が単価どおりでない: ${String(daily[0].cost_usd)}`);
+    assert.ok(Math.abs(Number(daily[1].cost_usd) - 0.01) < 1e-9, `Voyageの費用が単価どおりでない: ${String(daily[1].cost_usd)}`);
+    const classify = list(output.operations).map(record).find((row) => row.operation === 'classify_message');
+    assert.equal(classify?.duration_ms_p50, 300);
+    const jobs = list(output.jobs).map(record);
+    assert.deepEqual(
+      jobs.map((row) => [row.kind, row.completed, row.wait_ms_p50, row.run_ms_p50]),
+      [['classify_message', 1, 2000, 3000]],
+    );
+    assert.ok(Math.abs(Number(jobs[0].jev_cost_usd_per_job) - 0.042) < 1e-9, 'jobに紐付くJevの費用を平均していない');
+    const autoSearch = record(output.auto_search);
+    assert.deepEqual([autoSearch.completed, autoSearch.within_notify_wait_ratio, autoSearch.duration_ms_p50], [2, 0.5, 16000]);
+
+    const wide = parseSuccessJson(await runAdmin(['usage', companyId, '--days', '9']));
+    const wideJevCalls = list(wide.daily)
+      .map(record)
+      .filter((row) => row.provider === 'jev')
+      .reduce((sum, row) => sum + Number(row.calls), 0);
+    assert.equal(wideJevCalls, 3, '--daysで集計期間を広げても古い呼出しを数えていない');
+  });
+
+  it('usageは引数・会社・必要なmigrationを確認してから集計する', async () => {
+    const companyId = await createCompany('usage-check');
+    for (const args of [['usage'], ['usage', 'not-a-uuid'], ['usage', companyId, '--days', '0'], ['usage', companyId, '--days', '91'], ['usage', companyId, '--days', '1.5'], ['usage', companyId, '--day', '7']]) {
+      expectFail(await runAdmin(args), 'invalid_arguments');
+    }
+    expectFail(await runAdmin(['usage', '01930000-0000-7000-8000-000000000099']), 'company_not_found');
+    await pool.query("DELETE FROM schema_migrations WHERE version = '0021_job_timing_usage_job.sql'");
+    try {
+      expectFail(await runAdmin(['usage', companyId]), 'internal_error');
+    } finally {
+      await pool.query("INSERT INTO schema_migrations (version) VALUES ('0021_job_timing_usage_job.sql') ON CONFLICT DO NOTHING");
+    }
+  });
+});
+
 describe('会社境界', () => {
   it('別会社の社員を案件メンバーへ追加できない', async () => {
     const companyA = await createCompany('a');
