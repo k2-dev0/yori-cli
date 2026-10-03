@@ -99,8 +99,8 @@ DATABASE_URL='<database-url>' npm run --silent yori -- <command> [argument]
 ## 入出力
 
 - DB直結の従来管理コマンドは入力をJSONファイルで渡します。社員向けHTTPS APIコマンドはJSONファイルを要求しません。
-- `inspect` は会社IDを引数で渡します。
-- `inspect`・`redaction:list`・`redaction:replace`は`DATABASE_URL`未設定時にSSH alias `yori-production`経由で実行できます。
+- `inspect`・`usage` は会社IDを引数で渡します。
+- `inspect`・`usage`・`redaction:list`・`redaction:replace`は`DATABASE_URL`未設定時にSSH alias `yori-production`経由で実行できます。
 - 成功時はstdoutへindent付きのJSONを出力し、終了コード `0` で終了します。
 - 失敗時はstderrへ `admin: <error-code>` を出力し、終了コード `1` で終了します。
 
@@ -126,6 +126,7 @@ DATABASE_URL='<database-url>' npm run --silent yori -- <command> [argument]
 | `me` | 本人・会社・現在token metadata・会社projectを表示する |
 | `company:show` | company admin tokenで会社・社員・project・token metadataを表示する |
 | `inspect <company-uuid>` | 指定した会社の社員、案件、案件メンバー、認証トークンを表示する |
+| `usage <company-uuid> [--days <n>]` | 指定した会社の外部API（Jev・Voyage）の費用と所要時間、jobの待ち・処理時間、自動検索の所要時間を集計する |
 | `redaction:replace <file.json>` | 会社のcustom伏せ字fields/terms policyを置換する（詳細は[docs/admin.md](docs/admin.md)） |
 | `redaction:list <company-uuid>` | 会社のcustom伏せ字fields/terms policyを表示する（詳細は[docs/admin.md](docs/admin.md)） |
 | `project:repository:add <file.json>` | 案件へcanonical repository aliasを追加する（詳細は[docs/admin.md](docs/admin.md)） |
@@ -276,6 +277,34 @@ DATABASE_URL='<database-url>' npm run --silent yori -- <command> [argument]
   "projects": [{ "project_id": "<uuid>", "repository_identifier": "github.com/example/project-a", "created_at": "<timestamp>" }],
   "members": [{ "project_id": "<uuid>", "employee_id": "<uuid>", "created_at": "<timestamp>" }],
   "tokens": [{ "token_id": "<uuid>", "employee_id": "<uuid>", "created_at": "<timestamp>", "revoked_at": null }]
+}
+```
+
+### `usage`
+
+```text
+入力: yori usage <company-uuid> [--days <n>]
+```
+
+- 直近`n`日（既定7日、1〜90日）を集計します。日付はUTCです。原文とtokenは読みません。
+- 費用は入力token数×単価で、単価はCLIに固定した2026-10-03時点の値です（入力100万tokenあたりJev 0.042ドル、Voyage voyage-4-lite 0.02ドル。Jevの出力は無料）。単価の無いproviderの`cost_usd`は`null`です。
+- `jobs`の待ちは作成から最後の開始まで、処理は開始から完了までです。`jev_cost_usd_per_job`はjobに紐付くJevの呼出しだけを数えます。Voyageの呼出しはjobに紐付かないため含みません。
+- `auto_search.within_notify_wait_ratio`は、入力時のhookが待つ上限（10秒）以内に完了した自動検索の割合です。
+- yori本体のmigration `0021_job_timing_usage_job.sql`の適用前は`internal_error`で終了します。それより前のJevの所要時間はヘッダー受信までの値で、以後は本文受信までの値です。
+
+成功出力:
+
+```json
+{
+  "status": "ok",
+  "company_id": "<uuid>",
+  "days": 7,
+  "since": "<timestamp>",
+  "usd_per_million_input_tokens": { "jev": 0.042, "voyage_direct": 0.02 },
+  "daily": [{ "utc_date": "2026-10-03", "provider": "jev", "calls": 120, "failed": 1, "input_tokens": 4200000, "cost_usd": 0.1764 }],
+  "operations": [{ "provider": "jev", "operation": "execute_search", "calls": 40, "failed": 0, "input_tokens": 2600000, "cost_usd": 0.1092, "duration_ms_p50": 900, "duration_ms_p90": 1800 }],
+  "jobs": [{ "kind": "execute_search", "completed": 20, "jev_cost_usd_per_job": 0.00546, "wait_ms_p50": 0, "wait_ms_p90": 40, "run_ms_p50": 1700, "run_ms_p90": 2400 }],
+  "auto_search": { "completed": 20, "within_notify_wait_ratio": 1, "duration_ms_p50": 1800, "duration_ms_p90": 3000 }
 }
 ```
 
