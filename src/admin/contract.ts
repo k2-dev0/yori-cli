@@ -219,6 +219,39 @@ export interface InspectOutput {
   tokens: TokenMetadata[];
 }
 
+// usageは外部呼出しの件数・入力token・費用と、jobと自動検索の所要時間だけを返す。原文は含めない。日付はUTC。
+export interface UsageOutput {
+  status: 'ok';
+  company_id: string;
+  days: number;
+  since: string;
+  usd_per_million_input_tokens: Record<string, number>;
+  daily: { utc_date: string; provider: string; calls: number; failed: number; input_tokens: number; cost_usd: number | null }[];
+  // 処理ごとの所要時間は本文の受信まで含む。yori本体の0021より前のJevの行はヘッダー受信までの値が混ざる。
+  operations: {
+    provider: string;
+    operation: string;
+    calls: number;
+    failed: number;
+    input_tokens: number;
+    cost_usd: number | null;
+    duration_ms_p50: number | null;
+    duration_ms_p90: number | null;
+  }[];
+  // 待ちは作成から最後の開始まで、処理は開始から完了まで。費用はjobに紐付くJevの呼出しだけを数える。
+  jobs: { kind: string; completed: number; jev_cost_usd_per_job: number; wait_ms_p50: number | null; wait_ms_p90: number | null; run_ms_p50: number | null; run_ms_p90: number | null }[];
+  auto_search: { completed: number; within_notify_wait_ratio: number | null; duration_ms_p50: number | null; duration_ms_p90: number | null };
+}
+
+// usageの集計期間（日）。既定は直近1週間、上限は四半期とし、全期間の走査を避ける。
+export const DEFAULT_USAGE_DAYS = 7;
+export const MAX_USAGE_DAYS = 90;
+// 2026-10-03時点の入力100万tokenあたりの単価（USD）。Jevは出力が無料。Voyageはvoyage-4-liteの通常単価。
+export const USD_PER_MILLION_INPUT_TOKENS: Readonly<Record<string, number>> = { jev: 0.042, voyage_direct: 0.02 };
+export const TOKENS_PER_PRICE_UNIT = 1_000_000;
+// 入力時のhookが自動検索の結果を待つ上限。これ以内に終わった割合を出す。
+export const AUTO_SEARCH_NOTIFY_WAIT_MS = 10_000;
+
 // 生tokenを返すのはbootstrapとtoken:issueの成功出力だけ。
 export interface BootstrapOutput {
   status: 'created';
