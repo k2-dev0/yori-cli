@@ -16,10 +16,12 @@ import {
   revokeTokenViaApi,
   type ProjectRemovalTarget,
 } from '../collector/account.js';
-import { inspectCompanyOverSsh, listRedactionPolicyOverSsh, replaceRedactionPolicyOverSsh } from './ssh-transport.js';
+import { inspectCompanyOverSsh, listRedactionPolicyOverSsh, replaceRedactionPolicyOverSsh, reportCompanyUsageOverSsh } from './ssh-transport.js';
 import { runCollectorCommand } from '../collector/commands.js';
 import { registerCurrentProject } from '../collector/projects.js';
 import {
+  DEFAULT_USAGE_DAYS,
+  MAX_USAGE_DAYS,
   bootstrapInputSchema,
   companyCreateInputSchema,
   employeeCreateInputSchema,
@@ -46,6 +48,7 @@ import {
   removeProject,
   removeRepository,
   replaceRedactionPolicy,
+  reportCompanyUsage,
   revokeToken,
   runBootstrap,
 } from './service.js';
@@ -184,6 +187,28 @@ async function runInspect(env: NodeJS.ProcessEnv, rest: string[]): Promise<numbe
   }
 }
 
+// usageは会社UUIDと任意の`--days <n>`だけを受け、引数検証をDB接続・sshより先に行う。
+async function runUsage(env: NodeJS.ProcessEnv, rest: string[]): Promise<number> {
+  const companyId = z.uuid().safeParse(rest[0]);
+  const daysArgument = rest.length === 3 && rest[1] === '--days' && /^[1-9][0-9]*$/.test(rest[2]) ? Number(rest[2]) : Number.NaN;
+  const days = rest.length === 1 ? DEFAULT_USAGE_DAYS : daysArgument;
+  if (!companyId.success || !(days <= MAX_USAGE_DAYS)) {
+    return fail('invalid_arguments');
+  }
+  const url = databaseUrl(env);
+  if (url === null) {
+    const result = await reportCompanyUsageOverSsh(env, companyId.data.toLowerCase(), days);
+    return result.ok ? succeed(result.value) : fail(result.code);
+  }
+  const pool = createPool(url);
+  try {
+    const result = await reportCompanyUsage(pool, companyId.data.toLowerCase(), days);
+    return result.ok ? succeed(result.value) : fail(result.code);
+  } finally {
+    await pool.end();
+  }
+}
+
 async function runProjectAdd(env: NodeJS.ProcessEnv, rest: string[]): Promise<number> {
   if (rest.length !== 0) {
     return fail('invalid_arguments');
@@ -314,6 +339,8 @@ export async function runCli(argv: string[], env: NodeJS.ProcessEnv = process.en
         return await runCollectorCliCommand(command, rest, env);
       case 'inspect':
         return await runInspect(env, rest);
+      case 'usage':
+        return await runUsage(env, rest);
       default:
         return fail('invalid_arguments');
     }
