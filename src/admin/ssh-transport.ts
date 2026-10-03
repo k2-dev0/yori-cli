@@ -9,6 +9,7 @@ import {
   type RedactionListOutput,
   type RedactionReplaceInput,
   type RedactionReplaceOutput,
+  type UsageOutput,
 } from './contract.js';
 import { validateRedactionPolicy } from './redaction-rules.js';
 
@@ -56,6 +57,36 @@ const inspectOutputSchema = z.strictObject({
       revoked_at: timestampSchema.nullable(),
     }),
   ),
+});
+
+const nullableNumberSchema = z.number().nullable();
+const usageCallsShape = {
+  provider: z.string(),
+  calls: z.number().int().min(0),
+  failed: z.number().int().min(0),
+  input_tokens: z.number().min(0),
+  cost_usd: nullableNumberSchema,
+};
+const usageOutputSchema = z.strictObject({
+  status: z.literal('ok'),
+  company_id: z.uuid(),
+  days: z.number().int().min(1),
+  since: timestampSchema,
+  usd_per_million_input_tokens: z.record(z.string(), z.number()),
+  daily: z.array(z.strictObject({ utc_date: z.string(), ...usageCallsShape })),
+  operations: z.array(z.strictObject({ ...usageCallsShape, operation: z.string(), duration_ms_p50: nullableNumberSchema, duration_ms_p90: nullableNumberSchema })),
+  jobs: z.array(
+    z.strictObject({
+      kind: z.string(),
+      completed: z.number().int().min(0),
+      jev_cost_usd_per_job: z.number(),
+      wait_ms_p50: nullableNumberSchema,
+      wait_ms_p90: nullableNumberSchema,
+      run_ms_p50: nullableNumberSchema,
+      run_ms_p90: nullableNumberSchema,
+    }),
+  ),
+  auto_search: z.strictObject({ completed: z.number().int().min(0), within_notify_wait_ratio: nullableNumberSchema, duration_ms_p50: nullableNumberSchema, duration_ms_p90: nullableNumberSchema }),
 });
 
 type ListOutput = z.infer<typeof listOutputSchema>;
@@ -118,6 +149,12 @@ function listScript(version: string, companyId: string): string {
 // inspectは会社UUIDだけを固定versionのCLIへ渡す。
 function inspectScript(version: string, companyId: string): string {
   return ['set -eu', `cd ${REMOTE_DIR}`, REMOTE_RELEASE_SHA, remoteCliInvocation(version, [], ['inspect', companyId]), ''].join('\n');
+}
+
+// usageは会社UUIDと集計日数だけを固定versionのCLIへ渡す。
+function usageScript(version: string, companyId: string, days: number): string {
+  const args = ['usage', companyId, '--days', String(days)];
+  return ['set -eu', `cd ${REMOTE_DIR}`, REMOTE_RELEASE_SHA, remoteCliInvocation(version, [], args), ''].join('\n');
 }
 
 interface SshResult {
@@ -237,4 +274,14 @@ export async function inspectCompanyOverSsh(env: NodeJS.ProcessEnv, companyId: s
     return { ok: false, code: 'internal_error' };
   }
   return await runRemote(env, inspectScript(version, companyId), inspectOutputSchema);
+}
+
+export async function reportCompanyUsageOverSsh(env: NodeJS.ProcessEnv, companyId: string, days: number): Promise<AdminResult<UsageOutput>> {
+  const version = await cliVersion();
+  if (version === null) {
+    return { ok: false, code: 'internal_error' };
+  }
+  const result = await runRemote(env, usageScript(version, companyId, days), usageOutputSchema);
+  // remoteが要求と違う会社・期間を返した場合は、それを成功として扱わない。
+  return result.ok && (result.value.company_id !== companyId || result.value.days !== days) ? { ok: false, code: 'internal_error' } : result;
 }
