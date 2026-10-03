@@ -25,7 +25,9 @@ const REMOTE_COMPOSE_FILE = 'deployment/compose.yaml';
 // remote composeにcli serviceは無い。tools profileのmigrate serviceを一時Node環境として借りる。
 const REMOTE_SERVICE = 'migrate';
 const REMOTE_INPUT_PATH = '/input/redaction.json';
-const REMOTE_RELEASE_SHA = 'export YORI_RELEASE_SHA="$(git rev-parse --verify \'HEAD^{commit}\')"';
+// sudoは既定で環境変数を引き継がないため、exportせずshell変数に取り、composeRunがsudoの内側でenvとして渡す。
+// exportを付けない代入なので、git rev-parseの失敗はset -eでその場で止まる。
+const REMOTE_RELEASE_SHA = 'YORI_RELEASE_SHA="$(git rev-parse --verify \'HEAD^{commit}\')"';
 
 // remoteの成功応答はunknown key・欠落key・型違いを拒否し、契約外JSONをそのまま返さない。
 const replaceOutputSchema = z.strictObject({
@@ -106,7 +108,8 @@ function shellQuote(value: string): string {
 // migrationは別途実行せず、migrate serviceのentrypointだけをnpxへ上書きした1回のrunに委ねる。
 function composeRun(parts: readonly string[]): string {
   return [
-    'sudo docker compose',
+    // yori本体のdeploy.shと同じく、release SHAはsudoの内側でcomposeへ渡す。
+    'sudo env YORI_RELEASE_SHA="$YORI_RELEASE_SHA" docker compose',
     `-p ${REMOTE_COMPOSE_PROJECT}`,
     `--env-file ${REMOTE_ENV_FILE}`,
     `-f ${REMOTE_COMPOSE_FILE}`,
