@@ -230,3 +230,44 @@ INSERT INTO project_repositories (project_id, company_id, repository_identifier)
 SELECT id, company_id, repository_identifier
   FROM projects
 ON CONFLICT DO NOTHING;
+
+-- usageが読む会話・job・検索・外部呼出しの記録。正本はyoriの0001・0002・0006・0021で、usageが読む列だけを再現する。
+INSERT INTO schema_migrations (version)
+VALUES ('0021_job_timing_usage_job.sql')
+ON CONFLICT (version) DO NOTHING;
+
+CREATE TABLE IF NOT EXISTS sessions (
+  id uuid PRIMARY KEY,
+  project_id uuid NOT NULL REFERENCES projects (id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS jobs (
+  id uuid PRIMARY KEY,
+  kind text NOT NULL,
+  status text NOT NULL,
+  session_id uuid REFERENCES sessions (id) ON DELETE CASCADE,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  started_at timestamptz
+);
+
+CREATE TABLE IF NOT EXISTS search_requests (
+  id uuid PRIMARY KEY,
+  company_id uuid NOT NULL REFERENCES companies (id) ON DELETE CASCADE,
+  trigger text NOT NULL,
+  status text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS usage_events (
+  id uuid PRIMARY KEY,
+  company_id uuid NOT NULL REFERENCES companies (id) ON DELETE CASCADE,
+  provider text NOT NULL,
+  operation text NOT NULL,
+  input_tokens integer,
+  duration_ms integer NOT NULL,
+  success boolean NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  job_id uuid REFERENCES jobs (id) ON DELETE SET NULL
+);
