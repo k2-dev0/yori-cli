@@ -330,6 +330,7 @@ export async function runCli(argv: string[], env: NodeJS.ProcessEnv = process.en
         return await runInputCommand(env, repositoryInputSchema, rest, (pool, input) => removeRepository(pool, input));
       case 'collector:install':
       case 'collector:backfill':
+      case 'collector:export':
       case 'collector:update':
       case 'collector:doctor':
       case 'collector:uninstall':
