@@ -20,7 +20,7 @@ npx --yes --package=yori-cli@<reviewed-version> yori inspect <company-uuid>
 
 `DATABASE_URL` はargvで受け取らない。未設定・空の場合、`inspect` / `usage` / `redaction:replace` / `redaction:list`は本番server `yori-production` の `/srv/yori` で `docker compose -p yori --env-file /etc/yori/yori.env -f deployment/compose.yaml --profile tools run --rm --no-deps -T` を実行し、固定package version（`yori-cli@<package version>`）へ `/usr/bin/ssh`（test/開発時は `YORI_SSH_BIN`）で委ねる。それ以外のDB commandは`invalid_admin_config`で終了する。policy JSONは0600の一時fileだけへ置いてtrapで削除し、containerへread-only mountしてargv・stdout/stderrへ出さない。remoteの既知admin codeだけをそのまま返し、未知code・ssh transport failure・応答契約違反は `internal_error` へ縮退する。本番Composeはyori本体と同じDBの3値からURLを構成する。
 
-`collector:install` / `collector:update` / `collector:doctor` / `collector:backfill` / `collector:uninstall` / `collector:secret:*` はDBを使わず、`DATABASE_URL` を要求しない。macOS専用で、他platformでは `unsupported_platform` で端末を変更せずに終了する。導入手順と保持するfileは [README](../README.md) を参照。
+`collector:install` / `collector:update` / `collector:doctor` / `collector:backfill` / `collector:export` / `collector:uninstall` / `collector:secret:*` はDBを使わず、`DATABASE_URL` を要求しない。macOS専用で、他platformでは `unsupported_platform` で端末を変更せずに終了する。導入手順と保持するfileは [README](../README.md) を参照。
 
 `project:add`もDBへ直接接続せず、KeychainのYori tokenでHTTPS APIを呼ぶ。cwdのcanonical repositoryをtokenの会社へ登録し、新規は`done`、登録済みは`already`として終了コード0を返す。同じ会社の社員は登録済みprojectを共通利用する。
 
@@ -365,8 +365,11 @@ repositoryはUTF-8で1024バイト以内。host小文字・先頭slashなし・�
 | `launcher_error`（collector stderr） | stable launcherがindex不正・Keychain item欠落・known secret制限違反を検出し、子collectorを起動しなかった |
 | `launcher_error`（mcp stderr） | MCP launcherが設定・install状態を読めない、またはKeychainにtokenが無く、子MCPを起動しなかった |
 | `collector_internal_error` | setup APIの500・transport error・応答契約違反。collector:secret indexの破損も含む |
-| `collector_not_installed` | `collector:update` / `collector:backfill` の対象となるinstall状態が無い |
+| `collector_not_installed` | `collector:update` / `collector:backfill` / `collector:export` の対象となるinstall状態が無い |
 | `collector_backfill_error` | 配布collectorのbackfillが固定契約外の出力または失敗を返した |
+| `collector_export_error` | 配布collectorのexportが中央へ届かない・保存に失敗した・固定契約外の出力を返した。launcherがKeychainのtokenを読めない場合も含む |
+| `collector_export_output_exists` | 書き出し先に同名のCSVが既にある。上書きしないので、移動か削除をしてから再実行する |
+| `forbidden` / `employee_not_found`（`collector:export`） | 社員のtokenで他の社員を指定した / 指定した社員が同じ会社に居ない。中央が書き出しの経路を持たない古い版の場合も `employee_not_found` になる |
 | `collector_install_error` | 端末側fileへの書き込みに失敗し、全成果物をrollbackした |
 | `collector_rollback_failed` | 失敗時のrollback自体に失敗した |
 
