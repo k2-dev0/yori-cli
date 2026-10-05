@@ -3,7 +3,7 @@ import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { lstat, readFile, rm, stat } from 'node:fs/promises';
 import path from 'node:path';
-import type { AdminResult } from '../admin/contract.js';
+import type { AdminErrorCode, AdminResult } from '../admin/contract.js';
 import { loadCollectorApiUrl, requestCollectorSetup, type CollectorSetupResult } from './api.js';
 import { readCollectorArtifact, readCollectorMcpArtifact, type CollectorArtifact } from './artifact.js';
 import { collectorMcpConfigPath, collectorMcpLauncherPath, planCollectorMcp, writeCollectorMcpLauncher } from './mcp.js';
@@ -497,6 +497,64 @@ async function backfillCollector(args: readonly string[], env: NodeJS.ProcessEnv
   }
 }
 
+// 配布collectorのexportが返す固定codeのうち、利用者が原因を区別して対処できるものをadminのcodeへ対応させる。
+const EXPORT_FAILURE_CODES: ReadonlyMap<string, AdminErrorCode> = new Map([
+  ['invalid_arguments', 'collector_invalid_request'],
+  ['unauthorized', 'collector_unauthorized'],
+  ['forbidden', 'forbidden'],
+  ['employee_not_found', 'employee_not_found'],
+  ['output_exists', 'collector_export_output_exists'],
+]);
+
+const EXPORT_OPTIONS = ['--from', '--to', '--employee'];
+// 引数は「名前と値」の2つ組で並ぶ。
+const EXPORT_ARGUMENT_STEP = 2;
+// 配布collectorが返すのは保存先と件数だけのJSONなので、出力は小さい。
+const EXPORT_OUTPUT_MAX_BYTES = 64 * 1024;
+const EXPORT_FAILURE_PATTERN = /^collector: ([a-z_]+)\n$/;
+
+// 値つきの引数だけを1回ずつ受け、開始日を必須にする。日付と社員IDの中身は配布collectorが検証する。
+function parseExportArguments(args: readonly string[]): string[] {
+  const seen = new Set<string>();
+  for (let index = 0; index < args.length; index += EXPORT_ARGUMENT_STEP) {
+    const [key, value] = [args[index], args[index + 1]];
+    if (!EXPORT_OPTIONS.includes(key) || seen.has(key) || value === undefined || value.startsWith('--')) {
+      throw new CollectorFailure('collector_invalid_request');
+    }
+    seen.add(key);
+  }
+  if (!seen.has('--from')) {
+    throw new CollectorFailure('collector_invalid_request');
+  }
+  return [...args];
+}
+
+// 起動時cwdへCSVを置く。stable launcherがKeychainのtokenと設定の接続先を渡すので、利用者は接続先もtokenも指定しない。
+async function exportCollector(args: readonly string[], env: NodeJS.ProcessEnv): Promise<Record<string, unknown>> {
+  const exportArgs = parseExportArguments(args);
+  const home = collectorHome(env);
+  const installed = await readCollectorInstallState(collectorInstallStatePath(home));
+  if (installed === null || !existsSync(collectorLauncherPath(home))) {
+    throw new CollectorFailure('collector_not_installed');
+  }
+  const childArgs = [collectorLauncherPath(home), 'export', '--config', collectorConfigPath(home), ...exportArgs];
+  const spawnOptions = { cwd: process.cwd(), env, encoding: 'utf8' as const, maxBuffer: EXPORT_OUTPUT_MAX_BYTES };
+  const result = spawnSync(process.execPath, childArgs, { ...spawnOptions, stdio: ['ignore', 'pipe', 'pipe'] });
+  if (result.status !== 0) {
+    const code = EXPORT_FAILURE_PATTERN.exec(result.stderr ?? '')?.[1] ?? '';
+    throw new CollectorFailure(EXPORT_FAILURE_CODES.get(code) ?? 'collector_export_error');
+  }
+  try {
+    const output: unknown = JSON.parse(result.stdout);
+    if (typeof output === 'object' && output !== null && !Array.isArray(output)) {
+      return output as Record<string, unknown>;
+    }
+  } catch {
+    // 下で固定codeへ縮退させる。
+  }
+  throw new CollectorFailure('collector_export_error');
+}
+
 // collector:secret:add/list/remove。値はKeychainだけへ置き、indexはlabelだけを持つ。
 async function runCollectorSecretCommand(
   command: string,
@@ -547,6 +605,8 @@ export async function runCollectorCommand(
         return { ok: true, value: await installCollector(env) };
       case 'collector:backfill':
         return { ok: true, value: await backfillCollector(args, env) };
+      case 'collector:export':
+        return { ok: true, value: await exportCollector(args, env) };
       case 'collector:update':
         return { ok: true, value: await updateCollector(env) };
       case 'collector:doctor':
