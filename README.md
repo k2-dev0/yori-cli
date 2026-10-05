@@ -51,6 +51,7 @@ tokenの扱い:
 | `npx yori-cli collector:update` | 配布artifactをchecksum検証してから切り替え、旧versionを残す。hookとyori MCPの登録を現在の内容へ揃える。Keychainとstateは変更しない |
 | `npx yori-cli collector:doctor` | 秘密を含まない診断（install状態、Keychain、setup APIのcurrent policy version、権限、yori MCPの登録）を表示し、状態を変更しない |
 | `npx yori-cli collector:backfill [--dry-run] [--source codex\|claude_code\|deepseek_harness]` | 起動時のrepositoryから過去のroot会話を自動発見する。dry-runは本文・pathを出さず件数とversionだけを表示する |
+| `npx yori-cli collector:export --from YYYY-MM-DD [--to YYYY-MM-DD] [--employee 社員ID]` | 指定期間の会話（自分の入力・AIの回答・子の報告）を、実行したdirectory直下のCSVへ書き出す。接続先とtokenはinstall済みの設定とKeychainから読むので指定しない。`--to`省略時は`--from`の1日分、`--employee`省略時は本人。他の社員を指定できるのは会社の管理者のtokenだけ。 |
 | `npx yori-cli collector:uninstall` | 追加したhook・yori MCPの登録と許可rule・config・install rootだけを削除する。Keychainと`~/.yori-collector`は保持し、再installでpromptは出ない |
 
 過去履歴は対象repositoryのrootで実行します。repository pathの引数は不要です。
@@ -135,6 +136,7 @@ DATABASE_URL='<database-url>' npm run --silent yori -- <command> [argument]
 | `collector:update` | collector artifactを検証して切り替える（`DATABASE_URL`不要） |
 | `collector:doctor` | collector導入状態を秘密なしで診断する（`DATABASE_URL`不要） |
 | `collector:backfill [--dry-run] [--source codex\|claude_code\|deepseek_harness]` | cwdのrepositoryから過去のroot会話を回収する（`DATABASE_URL`不要） |
+| `collector:export --from YYYY-MM-DD [--to YYYY-MM-DD] [--employee 社員ID]` | 指定期間の会話をcwd直下のCSVへ書き出す（`DATABASE_URL`不要） |
 | `collector:uninstall` | collectorの所有entry・config・install rootを削除する（`DATABASE_URL`不要） |
 | `collector:secret:add <label>` | known secretをKeychainへ保存する（`--from-env <ENV_NAME>`、`DATABASE_URL`不要） |
 | `collector:secret:list` | known secretのlabelだけを昇順で表示する（`DATABASE_URL`不要） |
