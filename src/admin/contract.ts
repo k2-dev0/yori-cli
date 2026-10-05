@@ -28,6 +28,8 @@ export const ADMIN_ERROR_CODES = [
   'collector_artifact_invalid',
   'collector_backfill_error',
   'collector_config_invalid',
+  'collector_export_error',
+  'collector_export_output_exists',
   'collector_hook_conflict',
   'collector_hook_error',
   'collector_hook_invalid',
