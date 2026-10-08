@@ -22,7 +22,7 @@ npx yori-cli collector:install
 
 ### yori MCPの登録
 
-`collector:install`と`collector:update`は、検索結果の原文を取得するためのyori MCPをCodexとClaude Codeへ登録します。MCP導入前にinstallした端末は`collector:update`を1回実行すれば登録されます。
+`collector:install`と`collector:update`は、検索結果の原文を取得するためのyori MCPをCodexとClaude Codeへ登録します。MCP導入前にinstallした端末は`collector:update`を1回実行すれば登録されます。登録は実行中のsessionには反映されません。installとupdateは成功時の出力の`next_steps`でそのことを案内するので、再開ではなく新しいsessionを始めてください。
 
 | 対象 | 書き込む場所 | 内容 |
 |---|---|---|
