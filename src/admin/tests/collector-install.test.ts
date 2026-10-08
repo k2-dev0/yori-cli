@@ -750,6 +750,8 @@ describe('collector:install', () => {
       });
       const output = parseCollectorSuccess(await runRootCli(fixture, ['collector:install']));
       assert.equal(output.status, 'installed');
+      const installSteps = output.next_steps as string[] | undefined;
+      assert.ok(installSteps?.some((step) => step.includes('新しいsession')), 'installが新しいsessionを始める案内を返していない');
       assert.equal(existsSync(collectorConfigPath(fixture)), true);
       const installState = JSON.parse(await readText(path.join(collectorInstallRoot(fixture), 'install.json'))) as Record<string, unknown>;
       assert.equal(installState.policy_version, 5);
