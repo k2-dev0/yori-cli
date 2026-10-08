@@ -12,6 +12,7 @@ import {
   COLLECTOR_MANIFEST_FILE_NAME,
   COLLECTOR_MCP_BUNDLE_FILE_NAME,
   COLLECTOR_MCP_MANIFEST_FILE_NAME,
+  COLLECTOR_RESTART_SESSION_STEP,
   type CollectorAgent,
   type CollectorCommandOutput,
   CollectorFailure,
@@ -244,7 +245,8 @@ async function installCollector(env: NodeJS.ProcessEnv): Promise<CollectorComman
     }
     throw error instanceof CollectorFailure ? error : new CollectorFailure('collector_install_error');
   }
-  return successOutput('installed', artifact.version, agents, { artifact: true, launcher: true, config: true, hooks: true, mcp: true });
+  const output = successOutput('installed', artifact.version, agents, { artifact: true, launcher: true, config: true, hooks: true, mcp: true });
+  return { ...output, next_steps: [COLLECTOR_RESTART_SESSION_STEP] };
 }
 
 // updateは検証済みartifactへinstall.jsonを最後に切り替える。旧versionとsetup policy_versionを維持する。
@@ -289,7 +291,8 @@ async function updateCollector(env: NodeJS.ProcessEnv): Promise<CollectorCommand
     }
     throw error instanceof CollectorFailure ? error : new CollectorFailure('collector_install_error');
   }
-  return successOutput('updated', artifact.version, agents, { artifact: true, launcher: true, hooks: true, state: true, mcp: true });
+  const output = successOutput('updated', artifact.version, agents, { artifact: true, launcher: true, hooks: true, state: true, mcp: true });
+  return { ...output, next_steps: [COLLECTOR_RESTART_SESSION_STEP] };
 }
 
 async function fileMode(filePath: string): Promise<number | null> {
