@@ -48,7 +48,13 @@ export interface CollectorCommandOutput {
   agents: CollectorAgent[];
   // 秘密やpathを含めないboolean診断だけを返す。
   checks: Record<string, boolean>;
+  // 成功後に利用者が行う操作の案内。案内がないコマンドは項目ごと省く。
+  next_steps?: string[];
 }
+
+// hookとMCPの登録は、エージェントがsession開始時に読む。実行中のsessionは古い登録のまま動き続ける。
+export const COLLECTOR_RESTART_SESSION_STEP =
+  '実行中のCodex・Claude Codeのsessionにはyori MCPの登録が反映されません。再開ではなく新しいsessionを始めてください。';
 
 // 既知の失敗はadmin CLIと同じ固定codeへ縮退させ、raw errorを外へ出さない。
 export class CollectorFailure extends Error {
