@@ -93,7 +93,9 @@ describe('collector:update', () => {
       await writeCollectorArtifact(fixture, { version: V2_VERSION, content: V2_BUNDLE });
       await writeApiSpec(fixture, [DEFAULT_SETUP_RESPONSE]);
       const updated = await runRootCli(fixture, ['collector:update']);
-      parseCollectorSuccess(updated);
+      const updateOutput = parseCollectorSuccess(updated);
+      const updateSteps = updateOutput.next_steps as string[] | undefined;
+      assert.ok(updateSteps?.some((step) => step.includes('新しいsession')), `updateが新しいsessionを始める案内を返していない: ${updated.stdout}`);
       // test/development overrideのartifact pathはupdate後のconfig・manifest・hooksへ保存しない。
       assert.ok(!updated.stdout.includes(fixture.artifactDir));
       assert.deepEqual(await filesContaining(fixture.home, fixture.artifactDir), [], 'updateでoverride pathを保存している');
