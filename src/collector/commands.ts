@@ -265,7 +265,7 @@ async function updateCollector(env: NodeJS.ProcessEnv): Promise<CollectorCommand
   const agents = await detectCollectorAgents(home);
   const plannedHooks = await planCollectorHooks(home, agents, collectorLauncherPath(home), collectorConfigPath(home), 'install');
   const hookUpdates = await planCollectorMcp(home, agents, 'install', plannedHooks);
-  // 0.1.79以降のMCPはstate_dirの無い設定では起動しない。MCP設定はinstall.jsonの切り替えと同じ操作で書き換え、
+  // 0.2.0以降のMCPはstate_dirの無い設定では起動しない。MCP設定はinstall.jsonの切り替えと同じ操作で書き換え、
   // 失敗時は両方を元へ戻す。旧MCPは知らない項目を読まないので、切り替え前に書いても動く。
   const stateDir = await loadCollectorStateDir(home);
   const footprint = await captureInstallFootprint(home, artifact.version);
