@@ -331,6 +331,7 @@ export async function runCli(argv: string[], env: NodeJS.ProcessEnv = process.en
       case 'collector:install':
       case 'collector:backfill':
       case 'collector:export':
+      case 'collector:renew':
       case 'collector:update':
       case 'collector:doctor':
       case 'collector:uninstall':
