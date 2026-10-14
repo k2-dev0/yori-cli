@@ -247,7 +247,7 @@ describe('collector MCP登録', () => {
     }
   });
 
-  it('MCP launcherはKeychainのtokenと接続先をenvだけで子MCPへ渡し、設定fileには環境変数名だけを書く', async () => {
+  it('MCP launcherはKeychainのtokenと接続先をenvだけで子MCPへ渡し、設定fileには環境変数名とstateの場所だけを書く', async () => {
     await withCollectorFixture(async (fixture) => {
       await prepareCollectorInstall(fixture);
       await runOk(fixture, 'collector:install');
@@ -263,12 +263,50 @@ describe('collector MCP登録', () => {
       assert.equal(run.status, 0, `launcherが失敗した: ${run.stderr}`);
       const report = JSON.parse(run.stdout) as { marker: string; config: Record<string, string>; api_url: string; token_length: number; argv: string[] };
       assert.equal(report.marker, 'mcp-fixture-v1');
-      assert.deepEqual(Object.keys(report.config).sort(), ['api_token_env', 'api_url_env']);
+      assert.deepEqual(Object.keys(report.config).sort(), ['api_token_env', 'api_url_env', 'state_dir']);
+      // MCPはcollectorと同じ端末のstateからtokenを読む。~/.yori-collector.jsonのstate_dirと同じpathを指す。
+      assert.equal(report.config.state_dir, path.join(fixture.home, '.yori-collector'));
       assert.equal(report.api_url, DEFAULT_API_URL);
       assert.equal(report.token_length, DEFAULT_TOKEN.length);
       assert.deepEqual(report.argv, [], '子MCPへ引数を渡している');
       assert.ok(!run.stdout.includes(DEFAULT_TOKEN) && !run.stderr.includes(DEFAULT_TOKEN), 'tokenを出力している');
     });
+  });
+
+  it('updateは既存端末のMCP設定fileへ、~/.yori-collector.jsonのstate_dirを足す', async () => {
+    await withCollectorFixture(async (fixture) => {
+      await prepareCollectorInstall(fixture);
+      await runOk(fixture, 'collector:install');
+      const mcpConfigPath = path.join(collectorInstallRoot(fixture), 'mcp-config.json');
+      // state_dirを持たない旧形式のMCP設定と、既定と違う場所を指すcollector設定の端末を作る。
+      await writeFile(mcpConfigPath, `${JSON.stringify({ api_url_env: 'YORI_API_URL', api_token_env: 'YORI_API_TOKEN' }, null, 2)}\n`, 'utf8');
+      const stateDir = path.join(fixture.root, 'custom-state');
+      const configPath = path.join(fixture.home, '.yori-collector.json');
+      const config = await readJson(configPath);
+      await writeFile(configPath, `${JSON.stringify({ ...config, state_dir: stateDir }, null, 2)}\n`, 'utf8');
+
+      await runOk(fixture, 'collector:update');
+      assert.deepEqual(await readJson(mcpConfigPath), { api_url_env: 'YORI_API_URL', api_token_env: 'YORI_API_TOKEN', state_dir: stateDir });
+    });
+  });
+
+  it('~/.yori-collector.jsonのstate_dirが絶対pathでなければ、updateは何も切り替えずcollector_config_invalidで失敗する', async () => {
+    for (const stateDir of [undefined, 'relative/state']) {
+      await withCollectorFixture(async (fixture) => {
+        await prepareCollectorInstall(fixture);
+        await runOk(fixture, 'collector:install');
+        const configPath = path.join(fixture.home, '.yori-collector.json');
+        const config = await readJson(configPath);
+        await writeFile(configPath, `${JSON.stringify({ ...config, state_dir: stateDir }, null, 2)}\n`, 'utf8');
+        const before = await listFilesRecursively(collectorInstallRoot(fixture));
+        const mcpConfigBefore = await readText(path.join(collectorInstallRoot(fixture), 'mcp-config.json'));
+
+        const stderr = assertCollectorFailure(await runRootCli(fixture, ['collector:update']), [DEFAULT_TOKEN]);
+        assert.equal(stderr, 'admin: collector_config_invalid\n', String(stateDir));
+        assert.deepEqual(await listFilesRecursively(collectorInstallRoot(fixture)), before);
+        assert.equal(await readText(path.join(collectorInstallRoot(fixture), 'mcp-config.json')), mcpConfigBefore);
+      });
+    }
   });
 
   it('Keychainにtokenが無ければ子MCPを起動せずlauncher_errorで終了する', async () => {
