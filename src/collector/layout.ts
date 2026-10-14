@@ -1,4 +1,4 @@
-import { chmod, mkdir } from 'node:fs/promises';
+import { chmod, mkdir, readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import type { CollectorArtifact } from './artifact.js';
@@ -12,6 +12,7 @@ import {
   COLLECTOR_TOKEN_ENV,
   COLLECTOR_VERSION_DIR_NAME,
   type CollectorAgent,
+  CollectorFailure,
 } from './contract.js';
 import { writeFileAtomic } from './fs.js';
 
@@ -172,4 +173,19 @@ export async function writeCollectorVersion(home: string, artifact: CollectorArt
 export async function writeCollectorConfig(home: string, apiUrl: string): Promise<void> {
   const config = { api_url: apiUrl, token_env: COLLECTOR_TOKEN_ENV, state_dir: collectorStateDir(home) };
   await writeFileAtomic(collectorConfigPath(home), `${JSON.stringify(config, null, 2)}\n`, 0o600);
+}
+
+// 既存configのstate_dir。collectorと同じく絶対pathだけを受け、MCPが同じ端末のstateを読むために使う。
+export async function loadCollectorStateDir(home: string): Promise<string> {
+  let config: unknown;
+  try {
+    config = JSON.parse(await readFile(collectorConfigPath(home), 'utf8'));
+  } catch {
+    throw new CollectorFailure('collector_config_invalid');
+  }
+  const stateDir = typeof config === 'object' && config !== null ? (config as { state_dir?: unknown }).state_dir : undefined;
+  if (typeof stateDir !== 'string' || !path.isAbsolute(stateDir)) {
+    throw new CollectorFailure('collector_config_invalid');
+  }
+  return stateDir;
 }
