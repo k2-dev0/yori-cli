@@ -50,6 +50,7 @@ import {
   collectorLauncherPath,
   collectorStateDir,
   collectorVersionDir,
+  loadCollectorStateDir,
   writeCollectorConfig,
   writeCollectorLauncher,
   writeCollectorVersion,
@@ -211,7 +212,8 @@ async function installCollector(env: NodeJS.ProcessEnv): Promise<CollectorComman
     await writeCollectorVersion(home, artifact);
     await writeCollectorVersion(home, mcpArtifact);
     await writeCollectorLauncher(home);
-    await writeCollectorMcpLauncher(home);
+    // installはconfigのstate_dirを既定の場所で書き直すので、MCPにも同じ場所を書く。
+    await writeCollectorMcpLauncher(home, collectorStateDir(home));
     await writeCollectorConfig(home, apiUrl);
     await commitCollectorHooks(hookUpdates);
     hooksCommitted = true;
@@ -263,13 +265,16 @@ async function updateCollector(env: NodeJS.ProcessEnv): Promise<CollectorCommand
   const agents = await detectCollectorAgents(home);
   const plannedHooks = await planCollectorHooks(home, agents, collectorLauncherPath(home), collectorConfigPath(home), 'install');
   const hookUpdates = await planCollectorMcp(home, agents, 'install', plannedHooks);
+  // 0.1.79以降のMCPはstate_dirの無い設定では起動しない。MCP設定はinstall.jsonの切り替えと同じ操作で書き換え、
+  // 失敗時は両方を元へ戻す。旧MCPは知らない項目を読まないので、切り替え前に書いても動く。
+  const stateDir = await loadCollectorStateDir(home);
   const footprint = await captureInstallFootprint(home, artifact.version);
   let hooksCommitted = false;
   try {
     await writeCollectorVersion(home, artifact);
     await writeCollectorVersion(home, mcpArtifact);
     await writeCollectorLauncher(home);
-    await writeCollectorMcpLauncher(home);
+    await writeCollectorMcpLauncher(home, stateDir);
     await commitCollectorHooks(hookUpdates);
     hooksCommitted = true;
     await writeCollectorInstallState(collectorInstallStatePath(home), {
@@ -558,6 +563,49 @@ async function exportCollector(args: readonly string[], env: NodeJS.ProcessEnv):
   throw new CollectorFailure('collector_export_error');
 }
 
+// 配布collectorのrenewが返す固定code。renew_rejectedは管理者にtokenの発行を依頼するしかない失敗。
+const RENEW_FAILURE_CODES: ReadonlyMap<string, AdminErrorCode> = new Map([
+  ['renew_rejected', 'collector_renew_rejected'],
+  ['renew_unavailable', 'collector_renew_unavailable'],
+  ['renew_in_progress', 'collector_renew_in_progress'],
+  ['missing_token', 'collector_missing_token'],
+  ['credential_unavailable', 'collector_credential_unavailable'],
+]);
+// renew_rejectedは1行目の固定codeの後に案内の行が続くので、1行目だけを読む。
+const RENEW_FAILURE_PATTERN = /^collector: ([a-z_]+)\n/;
+
+// 接続tokenを手動で再発行する。tokenはlauncherと配布collectorの間だけで扱い、出力はstatusと期限だけに絞る。
+async function renewCollector(args: readonly string[], env: NodeJS.ProcessEnv): Promise<Record<string, unknown>> {
+  if (args.length !== 0) {
+    throw new CollectorFailure('collector_invalid_request');
+  }
+  const home = collectorHome(env);
+  const installed = await readCollectorInstallState(collectorInstallStatePath(home));
+  if (installed === null || !existsSync(collectorLauncherPath(home))) {
+    throw new CollectorFailure('collector_not_installed');
+  }
+  const childArgs = [collectorLauncherPath(home), 'renew', '--config', collectorConfigPath(home)];
+  const result = spawnSync(process.execPath, childArgs, {
+    env,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+    maxBuffer: 64 * 1024,
+  });
+  if (result.status !== 0) {
+    const code = RENEW_FAILURE_PATTERN.exec(result.stderr ?? '')?.[1] ?? '';
+    throw new CollectorFailure(RENEW_FAILURE_CODES.get(code) ?? 'collector_renew_error');
+  }
+  try {
+    const output = JSON.parse(result.stdout) as { status?: unknown; expires_at?: unknown } | null;
+    if (output?.status === 'renewed' && typeof output.expires_at === 'string') {
+      return { status: output.status, expires_at: output.expires_at };
+    }
+  } catch {
+    // 下で固定codeへ縮退させる。
+  }
+  throw new CollectorFailure('collector_renew_error');
+}
+
 // collector:secret:add/list/remove。値はKeychainだけへ置き、indexはlabelだけを持つ。
 async function runCollectorSecretCommand(
   command: string,
@@ -610,6 +658,8 @@ export async function runCollectorCommand(
         return { ok: true, value: await backfillCollector(args, env) };
       case 'collector:export':
         return { ok: true, value: await exportCollector(args, env) };
+      case 'collector:renew':
+        return { ok: true, value: await renewCollector(args, env) };
       case 'collector:update':
         return { ok: true, value: await updateCollector(env) };
       case 'collector:doctor':
