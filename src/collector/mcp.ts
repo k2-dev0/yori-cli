@@ -249,9 +249,14 @@ export async function planCollectorMcp(
   return updates;
 }
 
-export async function writeCollectorMcpLauncher(home: string): Promise<void> {
+// state_dirはcollectorと同じ端末のstate。MCPはtokenをそこから読み、環境変数のtokenはstateが空の時の取り込みだけに使う。
+export async function writeCollectorMcpLauncher(home: string, stateDir: string): Promise<void> {
   const source = [...MCP_LAUNCHER_HEAD, ...MCP_LAUNCHER_TOKEN, ...MCP_LAUNCHER_SPAWN].join('\n');
   await writeFileAtomic(collectorMcpLauncherPath(home), source, 0o500);
-  const config = { api_url_env: contract.COLLECTOR_MCP_API_URL_ENV, api_token_env: contract.COLLECTOR_MCP_API_TOKEN_ENV };
+  const config = {
+    api_url_env: contract.COLLECTOR_MCP_API_URL_ENV,
+    api_token_env: contract.COLLECTOR_MCP_API_TOKEN_ENV,
+    state_dir: stateDir,
+  };
   await writeFileAtomic(collectorMcpConfigPath(home), `${JSON.stringify(config, null, 2)}\n`, 0o600);
 }
