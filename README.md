@@ -42,7 +42,7 @@ tokenの扱い:
 
 - tokenの保存先はcollectorと同じKeychain item（service `online.yori.collector`）とcollectorのstateだけです。`config.toml`・`~/.claude.json`・`settings.json`・コマンド引数・ログへは書きません。
 - MCP launcher（`~/.local/share/yori/collector/mcp-launcher.mjs`）が起動のたびにKeychainからtokenを読み、接続先URLとともに子MCPの環境変数（`YORI_API_URL`・`YORI_API_TOKEN`）へだけ渡します。`mcp-config.json`にはこの環境変数の名前と、`~/.yori-collector.json`と同じ`state_dir`だけを書きます。MCPはtokenを要求のたびに`state_dir`のstateから読み、環境変数のtokenはstateが空の時の最初の1回だけ取り込みます。
-- collector 0.1.79以降のMCPは`state_dir`の無い`mcp-config.json`では起動しません。`collector:update`はartifactの切り替えと同じ操作で`mcp-config.json`へ`state_dir`を足します（失敗時は両方を元へ戻します）。`~/.yori-collector.json`の`state_dir`が絶対pathでなければ、何も切り替えず`collector_config_invalid`で終了します。
+- collector 0.2.0以降のMCPは`state_dir`の無い`mcp-config.json`では起動しません。`collector:update`はartifactの切り替えと同じ操作で`mcp-config.json`へ`state_dir`を足します（失敗時は両方を元へ戻します）。`~/.yori-collector.json`の`state_dir`が絶対pathでなければ、何も切り替えず`collector_config_invalid`で終了します。
 - 接続先は`~/.yori-collector.json`の`api_url`です。HTTPSだけを許可し、開発時に限りloopback（localhost・127.0.0.1・`::1`）のHTTPを使用できます。
 - Keychainにtokenが無い、または設定を読めない場合、launcherはMCPを起動せず標準エラーへ`mcp: launcher_error`だけを出して終了します。
 
