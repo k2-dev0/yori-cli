@@ -12,11 +12,12 @@ npx yori-cli collector:install
 ```
 
 - 動作環境はmacOS、Node.js 24以降、`git`。APIは既定で `https://yori-pilot.online`。
-- 初回だけ「Yori tokenを2回入力」と案内してからKeychainの非表示promptを開きます。tokenはKeychainとcollector専用環境変数以外へ保存せず、config・hook・logへ出しません。
+- 初回だけ「Yori tokenを2回入力」と案内してからKeychainの非表示promptを開きます。tokenはKeychain・collector専用環境変数・collectorのstate以外へ保存せず、config・hook・logへ出しません。
 - cwdの`git remote.origin.url`から対象repositoryをcanonical化します。認証なしsetup probeの正規401でAPI互換性を確認してから、Bearer付き`POST /v1/collector/setup`で案件とcurrent伏せ字policyを照合します。旧APIのroute-not-foundは`collector_server_incompatible`です。
 - `~/.codex`が存在すれば、`hooks.json`が未作成または0バイトでも安全な空objectから作成・修復します。Claude Codeも`~/.claude`が存在すれば、`settings.json`が未作成または0バイトでも同じく空objectから作成・修復し、`UserPromptSubmit`へ同期notifyと非同期notify-late、`Stop`へ同期collectを追加します。notifyは現在入力を最大3秒待ち、未完了結果はnotify-lateまたは次回入力で一度だけ配信します。どちらも検出できない場合は`agent_not_found`で終了します。
 - hookは固定のlocal artifact（`~/.local/share/yori/collector/versions/<version>/`）をstable launcher経由で呼び、npxやlatestへ依存しません。manifestとinstall stateはcollector version・Git SHA・SHA-256 checksumを保持し、同一versionで識別情報が違うartifactは拒否します。
 - 設定は`~/.yori-collector.json`、stateは`~/.yori-collector`、token環境変数は`YORI_COLLECTOR_TOKEN`。
+- collectorとyori MCPは接続tokenをstate（`~/.yori-collector.json`の`state_dir`）に持ちます。Keychainのtokenはstateにtokenが無い時の最初の1回だけ取り込み、その後は読みません。collectorは期限の7日前からhookの中でtokenを自動で再発行し、Keychainの値は書き換えません。
 - `project:add`はcwdのGit remoteを社員tokenの会社へ登録し、新規は`done`、登録済みは`already`を返します。同じ会社の社員は登録済みprojectを共通利用します。
 - `me`は通常tokenで本人・会社・現在token・会社projectを表示します。`company:show`、`employee:add`、`employee:rename`、API版token管理は別Keychain service `online.yori.admin`のcompany admin tokenを使い、通常collector tokenを上書きしません。
 
@@ -39,8 +40,9 @@ npx yori-cli collector:install
 
 tokenの扱い:
 
-- tokenの保存先はcollectorと同じKeychain item（service `online.yori.collector`）だけです。`config.toml`・`~/.claude.json`・`settings.json`・コマンド引数・ログへは書きません。
-- MCP launcher（`~/.local/share/yori/collector/mcp-launcher.mjs`）が起動のたびにKeychainからtokenを読み、接続先URLとともに子MCPの環境変数（`YORI_API_URL`・`YORI_API_TOKEN`）へだけ渡します。`mcp-config.json`にはこの環境変数の名前だけを書きます。
+- tokenの保存先はcollectorと同じKeychain item（service `online.yori.collector`）とcollectorのstateだけです。`config.toml`・`~/.claude.json`・`settings.json`・コマンド引数・ログへは書きません。
+- MCP launcher（`~/.local/share/yori/collector/mcp-launcher.mjs`）が起動のたびにKeychainからtokenを読み、接続先URLとともに子MCPの環境変数（`YORI_API_URL`・`YORI_API_TOKEN`）へだけ渡します。`mcp-config.json`にはこの環境変数の名前と、`~/.yori-collector.json`と同じ`state_dir`だけを書きます。MCPはtokenを要求のたびに`state_dir`のstateから読み、環境変数のtokenはstateが空の時の最初の1回だけ取り込みます。
+- collector 0.1.79以降のMCPは`state_dir`の無い`mcp-config.json`では起動しません。`collector:update`はartifactの切り替えと同じ操作で`mcp-config.json`へ`state_dir`を足します（失敗時は両方を元へ戻します）。`~/.yori-collector.json`の`state_dir`が絶対pathでなければ、何も切り替えず`collector_config_invalid`で終了します。
 - 接続先は`~/.yori-collector.json`の`api_url`です。HTTPSだけを許可し、開発時に限りloopback（localhost・127.0.0.1・`::1`）のHTTPを使用できます。
 - Keychainにtokenが無い、または設定を読めない場合、launcherはMCPを起動せず標準エラーへ`mcp: launcher_error`だけを出して終了します。
 
@@ -52,7 +54,19 @@ tokenの扱い:
 | `npx yori-cli collector:doctor` | 秘密を含まない診断（install状態、Keychain、setup APIのcurrent policy version、権限、yori MCPの登録）を表示し、状態を変更しない |
 | `npx yori-cli collector:backfill [--dry-run] [--source codex\|claude_code\|deepseek_harness]` | 起動時のrepositoryから過去のroot会話を自動発見する。dry-runは本文・pathを出さず件数とversionだけを表示する |
 | `npx yori-cli collector:export --from YYYY-MM-DD [--to YYYY-MM-DD] [--employee 社員ID]` | 指定期間の会話（自分の入力・AIの回答・子の報告）を、実行したdirectory直下のCSVへ書き出す。接続先とtokenはinstall済みの設定とKeychainから読むので指定しない。`--to`省略時は`--from`の1日分、`--employee`省略時は本人。他の社員を指定できるのは会社の管理者のtokenだけ。 |
+| `npx yori-cli collector:renew` | 接続tokenを手動で再発行する（期限から14日以内の手動の復旧用）。普段はhookが期限の7日前から自動で再発行するので打たなくてよい。引数は受けない。成功時は`status`（`renewed`）と`expires_at`だけを出し、tokenは出さない。失敗は下の固定codeで終了する |
 | `npx yori-cli collector:uninstall` | 追加したhook・yori MCPの登録と許可rule・config・install rootだけを削除する。Keychainと`~/.yori-collector`は保持し、再installでpromptは出ない |
+
+`collector:renew`の失敗:
+
+| 固定code | 意味と対処 |
+|---|---|
+| `collector_renew_rejected` | 中央が再発行を断った（401）。同じtokenでは再発行できない。管理者に新しい token の発行を依頼してください |
+| `collector_renew_unavailable` | 中央へ届かなかった。時間をおいて再実行する |
+| `collector_renew_in_progress` | 別の処理（hook）が再発行中。少し待って再実行する |
+| `collector_missing_token` | stateにもKeychainにもtokenが無い |
+| `collector_credential_unavailable` | 初回の取り込みで社員IDを取れなかった（`GET /v1/me`の失敗） |
+| `collector_renew_error` | それ以外（launcherがKeychainのtokenを読めない`launcher_error`を含む） |
 
 過去履歴は対象repositoryのrootで実行します。repository pathの引数は不要です。
 
@@ -137,6 +151,7 @@ DATABASE_URL='<database-url>' npm run --silent yori -- <command> [argument]
 | `collector:doctor` | collector導入状態を秘密なしで診断する（`DATABASE_URL`不要） |
 | `collector:backfill [--dry-run] [--source codex\|claude_code\|deepseek_harness]` | cwdのrepositoryから過去のroot会話を回収する（`DATABASE_URL`不要） |
 | `collector:export --from YYYY-MM-DD [--to YYYY-MM-DD] [--employee 社員ID]` | 指定期間の会話をcwd直下のCSVへ書き出す（`DATABASE_URL`不要） |
+| `collector:renew` | collectorの接続tokenを手動で再発行する（`DATABASE_URL`不要） |
 | `collector:uninstall` | collectorの所有entry・config・install rootを削除する（`DATABASE_URL`不要） |
 | `collector:secret:add <label>` | known secretをKeychainへ保存する（`--from-env <ENV_NAME>`、`DATABASE_URL`不要） |
 | `collector:secret:list` | known secretのlabelだけを昇順で表示する（`DATABASE_URL`不要） |
