@@ -356,7 +356,8 @@ repositoryはUTF-8で1024バイト以内。host小文字・先頭slashなし・�
 | `unsupported_platform` | collector commandをmacOS以外で実行した |
 | `collector_artifact_invalid` | collector / MCP artifactまたはmanifestの欠落・checksum不一致、MCPとcollectorのversion不一致 |
 | `collector_config_invalid` | collector configのapi_urlがhttps/loopback http以外、またはuserinfo・query・fragment付き |
-| `collector_hook_invalid` | hook設定またはMCP登録先（`~/.codex/config.toml`・`~/.claude.json`）がsymlink・不正JSON・不正TOML・非object |
+| `collector_hook_invalid` | hook設定またはMCP登録先（`~/.codex/config.toml`・`~/.claude.json`）が通常file以外・不正JSON・不正TOML・非object |
+| `collector_hook_symlink_invalid` | hook設定またはMCP登録先がsymlinkで、辿った先がhomeの外・存在しない（壊れたsymlink）・通常file以外。どの設定fileも変更しない。symlinkの先がhome配下の通常fileなら、symlinkは残したまま先の実体を書き換える（modeは保つ） |
 | `collector_hook_conflict` | 既存hookに所有entryと競合するcollector設定がある。`config.toml`でyori MCPが別の書き方で定義済み、または書き込み直前に他processが設定を変更した場合も含む |
 | `collector_hook_error` | hook書き込みに失敗し、全成果物をrollbackした |
 | `collector_keychain_error` | Keychain token / known secretの登録・取得・削除に失敗した |
