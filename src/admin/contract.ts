@@ -34,6 +34,7 @@ export const ADMIN_ERROR_CODES = [
   'collector_hook_conflict',
   'collector_hook_error',
   'collector_hook_invalid',
+  'collector_hook_symlink_invalid',
   'collector_install_error',
   'collector_internal_error',
   'collector_invalid_request',
