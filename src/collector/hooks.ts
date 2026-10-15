@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { lstat, readFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { COLLECTOR_CONFIG_FILE_NAME, type CollectorAgent, CollectorFailure } from './contract.js';
-import { writeFileAtomic } from './fs.js';
+import { resolveAgentConfigFile, writeFileAtomic } from './fs.js';
 import { collectorHookPath, collectorSource } from './layout.js';
 
 type CollectorHookAction = 'install' | 'uninstall';
@@ -83,19 +83,17 @@ export async function detectCollectorAgents(home: string): Promise<CollectorAgen
   return agents;
 }
 
-// 既存hookを読み、symlink・不正JSON・非objectを変更前に拒否する。
+// 既存hookを読み、許さないsymlink・通常file以外・不正JSON・非objectを変更前に拒否する。
+// symlinkは実体のpathとmodeを返し、書き込みも実体へ行う。
 export async function loadCollectorHook(home: string, agent: CollectorAgent): Promise<CollectorHookState | null> {
-  const filePath = collectorHookPath(home, agent);
-  let stats;
-  try {
-    stats = await lstat(filePath);
-  } catch {
+  const file = await resolveAgentConfigFile(collectorHookPath(home, agent), home);
+  if (file === null) {
     return null;
   }
-  if (stats.isSymbolicLink() || !stats.isFile()) {
+  if (!file.stats.isFile()) {
     throw new CollectorFailure('collector_hook_invalid');
   }
-  const original = await readFile(filePath);
+  const original = await readFile(file.path);
   let json: unknown;
   try {
     json = original.length === 0 ? {} : JSON.parse(original.toString('utf8'));
@@ -107,11 +105,11 @@ export async function loadCollectorHook(home: string, agent: CollectorAgent): Pr
   }
   return {
     agent,
-    path: filePath,
+    path: file.path,
     text: original.toString('utf8'),
     original,
     json,
-    mode: stats.mode & 0o777,
+    mode: file.stats.mode & 0o777,
   };
 }
 
