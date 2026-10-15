@@ -1,11 +1,11 @@
 // yori MCPの端末側launcherと、Codex・Claude Codeへの登録。token本文は設定file・引数へ書かず、launcherが子MCPのenvへだけ渡す。
-import { lstat, readFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { parse as parseToml } from 'smol-toml';
 import * as contract from './contract.js';
 import { type CollectorAgent, CollectorFailure, COLLECTOR_MCP_CONFIG_FILE_NAME, COLLECTOR_MCP_LAUNCHER_FILE_NAME } from './contract.js';
-import { writeFileAtomic } from './fs.js';
+import { resolveAgentConfigFile, writeFileAtomic } from './fs.js';
 import type { CollectorHookUpdate } from './hooks.js';
 import { collectorHookPath, collectorInstallRoot } from './layout.js';
 
@@ -190,17 +190,18 @@ function renderCodexConfig(text: string, expected: CodexMcpEntry | undefined): s
   return next;
 }
 
-// 未作成のfileは空本文として読む。symlink・通常file以外は変更前に拒否する。
-async function loadMcpFile(filePath: string): Promise<CollectorHookUpdate> {
-  const stats = await lstat(filePath).catch(() => null);
-  if (stats === null) {
+// 未作成のfileは空本文として読む。許さないsymlink・通常file以外は変更前に拒否する。
+// symlinkは実体のpathとmodeを返し、書き込みも実体へ行う。
+async function loadMcpFile(filePath: string, home: string): Promise<CollectorHookUpdate> {
+  const file = await resolveAgentConfigFile(filePath, home);
+  if (file === null) {
     return { path: filePath, content: '', original: null, mode: 0o600 };
   }
-  if (stats.isSymbolicLink() || !stats.isFile()) {
+  if (!file.stats.isFile()) {
     return failInvalid();
   }
-  const original = await readFile(filePath);
-  return { path: filePath, content: original.toString('utf8'), original, mode: stats.mode & 0o777 };
+  const original = await readFile(file.path);
+  return { path: file.path, content: original.toString('utf8'), original, mode: file.stats.mode & 0o777 };
 }
 
 function mcpTargets(home: string, agent: CollectorAgent, launcherPath: string, action: McpAction): { path: string; render: McpRender }[] {
@@ -224,7 +225,7 @@ function renderMcpFile(render: McpRender, text: string): string | null {
 }
 
 // hookの書き換え計画へMCP登録を合流させる。同じfile（Claude Codeのsettings.json）は1回の書き込みへまとめ、
-// hookと同じhash照合・rollbackに乗せる。
+// hookと同じhash照合・rollbackに乗せる。hookの計画はsymlinkを実体のpathで持つため、実体のpathで突き合わせる。
 export async function planCollectorMcp(
   home: string,
   agents: readonly CollectorAgent[],
@@ -234,8 +235,9 @@ export async function planCollectorMcp(
   const updates = hookUpdates.map((update) => ({ ...update }));
   const launcherPath = collectorMcpLauncherPath(home);
   for (const target of agents.flatMap((agent) => mcpTargets(home, agent, launcherPath, action))) {
-    const planned = updates.find((update) => update.path === target.path);
-    const base = planned ?? (await loadMcpFile(target.path));
+    const loaded = await loadMcpFile(target.path, home);
+    const planned = updates.find((update) => update.path === loaded.path);
+    const base = planned ?? loaded;
     const content = renderMcpFile(target.render, base.content);
     if (content === null) {
       continue;
