@@ -450,7 +450,7 @@ describe('collector:install', () => {
     });
   });
 
-  it('hook設定がsymlinkなら参照先を変更せず失敗する', async () => {
+  it('hook設定がhomeの外を指すsymlinkなら参照先を変更せず失敗する', async () => {
     await withCollectorFixture(async (fixture) => {
       await prepareCollectorInstall(fixture, { tokenRegistered: true });
       const decoyPath = path.join(fixture.root, 'decoy-settings.json');
@@ -460,6 +460,7 @@ describe('collector:install', () => {
       const codexBefore = await readText(hookPath(fixture, 'codex'));
       const run = await runRootCli(fixture, ['collector:install']);
       assertCollectorFailure(run, [DEFAULT_TOKEN]);
+      assert.equal(run.stderr, 'admin: collector_hook_symlink_invalid\n');
       assert.equal(await readText(decoyPath), '{"keep":true}\n', 'symlinkの参照先を変更している');
       assert.equal(await readText(hookPath(fixture, 'codex')), codexBefore, 'symlink検出時にcodex側を変更している');
       assert.equal(existsSync(collectorConfigPath(fixture)), false);
