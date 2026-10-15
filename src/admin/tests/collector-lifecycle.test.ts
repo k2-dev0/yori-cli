@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { chmod, lstat, mkdir, readFile, readlink, rename, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import {
   DEFAULT_COLLECTOR_BUNDLE,
@@ -9,6 +9,7 @@ import {
   DEFAULT_COLLECTOR_VERSION,
   DEFAULT_SETUP_RESPONSE,
   DEFAULT_TOKEN,
+  agentHookFixture,
   assertCollectorFailure,
   collectorCommandsFor,
   collectorConfigPath,
@@ -27,6 +28,8 @@ import {
   withCollectorFixture,
   writeApiSpec,
   writeCollectorArtifact,
+  writeHookJson,
+  type CollectorAgent,
   type CollectorFixture,
   type CollectorRun,
 } from './collector-support.js';
@@ -70,6 +73,25 @@ async function snapshot(directory: string): Promise<Map<string, string>> {
     }
   }
   return entries;
+}
+
+// dotfiles管理の再現: 設定fileをhome配下の~/.config/<agent>へ移し、元のpathをそこを指すsymlinkにする。
+// 実体のmodeは既定と違う値にし、書き換え後もmodeを保つことを検証できるようにする。
+async function linkHookIntoConfigDir(fixture: CollectorFixture, agent: CollectorAgent): Promise<string> {
+  const link = hookPath(fixture, agent);
+  const target = path.join(fixture.home, '.config', agent, path.basename(link));
+  await mkdir(path.dirname(target), { recursive: true });
+  await rename(link, target);
+  await chmod(target, 0o640);
+  await symlink(target, link);
+  return target;
+}
+
+async function assertLinkKept(fixture: CollectorFixture, agent: CollectorAgent, target: string): Promise<void> {
+  const link = hookPath(fixture, agent);
+  assert.ok((await lstat(link)).isSymbolicLink(), `${agent}のsymlinkを通常fileへ置き換えている`);
+  assert.equal(await readlink(link), target, `${agent}のsymlinkの参照先を変えている`);
+  assert.equal((await stat(target)).mode & 0o777, 0o640, `${agent}の実体のmodeを保っていない`);
 }
 
 // 成功時にstdoutが空か、改行で終わるJSON objectであることを確認する（UNIX的な無出力も許容）。
@@ -214,6 +236,81 @@ describe('collector:update', () => {
       });
     }
   });
+
+  it('設定fileがhome配下の実体を指すsymlinkなら、symlinkを残して実体へhookとMCP登録を書き、modeを保つ', async () => {
+    await withCollectorFixture(async (fixture) => {
+      await installV1(fixture);
+      const targets = new Map<CollectorAgent, string>();
+      for (const agent of AGENTS) {
+        // collector entryを外し、updateで実体への書き込みが起きるようにする。
+        await writeHookJson(fixture, agent, agentHookFixture());
+        targets.set(agent, await linkHookIntoConfigDir(fixture, agent));
+      }
+
+      await writeCollectorArtifact(fixture, { version: V2_VERSION, content: V2_BUNDLE });
+      parseCollectorSuccess(await runRootCli(fixture, ['collector:update']));
+
+      for (const agent of AGENTS) {
+        const target = targets.get(agent) as string;
+        await assertLinkKept(fixture, agent, target);
+        assert.equal((await collectorCommandsFor(fixture, agent)).length, 3, `${agent}の実体へhookを入れていない`);
+        assert.ok((await readText(target)).includes('echo unrelated-prompt'), `${agent}の無関係なhookを消している`);
+      }
+      assert.ok((await readText(targets.get('claude_code') as string)).includes('mcp__yori__get_evidence'), '実体へ読み取りtoolの許可ruleを入れていない');
+
+      // 許す条件を満たすsymlinkは、doctorでも異常にしない。
+      await writeApiSpec(fixture, [DEFAULT_SETUP_RESPONSE]);
+      const checks = parseCollectorSuccess(await runRootCli(fixture, ['collector:doctor'])).checks as Record<string, boolean>;
+      assert.equal(checks.hooks, true, 'doctorがsymlinkのhookを異常にしている');
+      assert.equal(checks.mcp, true, 'doctorがsymlinkのMCP登録を異常にしている');
+    });
+  });
+
+  it('symlinkの先がhomeの外・壊れている・directoryなら、何も書かずに失敗する', async () => {
+    const cases: [string, (fixture: CollectorFixture) => Promise<string>][] = [
+      [
+        'homeの外',
+        async (fixture) => {
+          const target = path.join(fixture.root, 'outside-settings.json');
+          await writeFile(target, '{"keep":true}\n', 'utf8');
+          return target;
+        },
+      ],
+      ['壊れたsymlink', async (fixture) => path.join(fixture.home, '.config', 'claude', 'missing.json')],
+      [
+        'directory',
+        async (fixture) => {
+          const target = path.join(fixture.home, '.config', 'claude');
+          await mkdir(target, { recursive: true });
+          return target;
+        },
+      ],
+    ];
+    for (const [label, prepareTarget] of cases) {
+      await withCollectorFixture(async (fixture) => {
+        await installV1(fixture);
+        const link = hookPath(fixture, 'claude_code');
+        const target = await prepareTarget(fixture);
+        await rm(link);
+        await symlink(target, link);
+        const targetBefore = await readText(target).catch(() => null);
+        const codexBefore = await readText(hookPath(fixture, 'codex'));
+        const stateBefore = await readText(path.join(collectorInstallRoot(fixture), 'install.json'));
+
+        await writeCollectorArtifact(fixture, { version: V2_VERSION, content: V2_BUNDLE });
+        const run = await runRootCli(fixture, ['collector:update']);
+        assertCollectorFailure(run, [DEFAULT_TOKEN]);
+        assert.equal(run.stderr, 'admin: collector_hook_symlink_invalid\n', `${label}のsymlinkを理由の分かるcodeで拒否していない`);
+
+        assert.ok((await lstat(link)).isSymbolicLink(), `${label}: symlinkを置き換えている`);
+        assert.equal(await readlink(link), target, `${label}: symlinkの参照先を変えている`);
+        assert.equal(await readText(target).catch(() => null), targetBefore, `${label}: symlinkの先を変更している`);
+        assert.equal(await readText(hookPath(fixture, 'codex')), codexBefore, `${label}: codex側を変更している`);
+        assert.equal(await readText(path.join(collectorInstallRoot(fixture), 'install.json')), stateBefore, `${label}: versionを切り替えている`);
+        assert.equal(existsSync(collectorVersionDir(fixture, V2_VERSION)), false, `${label}: 新versionを配置している`);
+      });
+    }
+  });
 });
 
 describe('collector:doctor', () => {
@@ -274,6 +371,27 @@ describe('collector:uninstall', () => {
       const addCalls = (await readSecurityCalls(fixture)).filter((args) => args[0] === 'add-generic-password');
       assert.equal(addCalls.length, 0, '再installでKeychain promptをやり直している');
       assert.equal((await collectorCommandsFor(fixture, 'codex')).length, 3);
+    });
+  });
+
+  it('設定fileがhome配下の実体を指すsymlinkなら、symlinkを残して実体からyoriの登録だけを消す', async () => {
+    await withCollectorFixture(async (fixture) => {
+      await installV1(fixture);
+      const targets = new Map<CollectorAgent, string>();
+      for (const agent of AGENTS) {
+        targets.set(agent, await linkHookIntoConfigDir(fixture, agent));
+      }
+
+      assertSuccess(await runRootCli(fixture, ['collector:uninstall']));
+
+      for (const agent of AGENTS) {
+        const target = targets.get(agent) as string;
+        await assertLinkKept(fixture, agent, target);
+        assert.deepEqual(await collectorCommandsFor(fixture, agent), [], `${agent}の実体にcollector entryが残っている`);
+        const text = await readText(target);
+        assert.ok(text.includes('echo unrelated-prompt') && text.includes('echo unrelated-stop'), `${agent}の無関係なhookを消している`);
+      }
+      assert.ok(!(await readText(targets.get('claude_code') as string)).includes('mcp__yori__'), '実体に読み取りtoolの許可ruleが残っている');
     });
   });
 });
