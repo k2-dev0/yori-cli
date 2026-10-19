@@ -79,6 +79,12 @@ describe('社員向けproject API CLI', () => {
   it('API失敗を固定codeへmapし、tokenとraw bodyを出さない', async () => {
     for (const fixtureCase of [
       { status: 401, body: { error: { code: 'unauthorized' } }, code: 'collector_unauthorized' },
+      { status: 401, body: { error: { code: 'token_expired' } }, code: 'collector_token_expired' },
+      {
+        status: 200,
+        body: { status: 'done', project_id: PROJECT_ID, repository: REPOSITORY, members_only: false, marker: 'RAW_MARKER' },
+        code: 'collector_server_incompatible',
+      },
       { status: 403, body: { error: { code: 'forbidden' } }, code: 'forbidden' },
       { status: 404, body: { error: { code: 'not_found' } }, code: 'project_not_found' },
       { status: 409, body: { error: { code: 'repository_conflict' } }, code: 'repository_conflict' },

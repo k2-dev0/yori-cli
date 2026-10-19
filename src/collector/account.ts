@@ -57,7 +57,9 @@ const issueResponseSchema = z.strictObject({
 const revokeResponseSchema = z.strictObject({ status: z.enum(['done', 'already']), token_id: z.uuid() });
 const projectRemovalResponseSchema = z.strictObject({ status: z.literal('done'), project_id: z.uuid() });
 const accountErrorSchema = z.strictObject({
-  error: z.strictObject({ code: z.enum(['invalid_request', 'unauthorized', 'forbidden', 'not_found', 'conflict', 'internal_error']) }),
+  error: z.strictObject({
+    code: z.enum(['invalid_request', 'unauthorized', 'token_expired', 'forbidden', 'not_found', 'conflict', 'internal_error']),
+  }),
 });
 
 export type TokenScope = z.infer<typeof tokenScopeSchema>;
@@ -87,6 +89,7 @@ function apiFailure(status: number, body: unknown, notFound: AdminErrorCode, con
   const code = parsed.data.error.code;
   if (status === 400 && code === 'invalid_request') throw new CollectorFailure('collector_invalid_request');
   if (status === 401 && code === 'unauthorized') throw new CollectorFailure('collector_unauthorized');
+  if (status === 401 && code === 'token_expired') throw new CollectorFailure('collector_token_expired');
   if (status === 403 && code === 'forbidden') throw new CollectorFailure('forbidden');
   if (status === 404 && code === 'not_found') throw new CollectorFailure(notFound);
   if (status === 409 && code === 'conflict') throw new CollectorFailure(conflict);
@@ -117,7 +120,7 @@ async function requestJson<T>(
   const body: unknown = await response.json().catch(() => null);
   if (response.status === expectedStatus) {
     const parsed = schema.safeParse(body);
-    if (!parsed.success) throw new CollectorFailure('collector_internal_error');
+    if (!parsed.success) throw new CollectorFailure('collector_server_incompatible');
     return parsed.data;
   }
   return apiFailure(response.status, body, notFound, conflict);

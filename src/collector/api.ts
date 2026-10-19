@@ -18,7 +18,7 @@ const collectorSetupResponseSchema = z.strictObject({
 });
 const collectorErrorResponseSchema = z.strictObject({
   error: z.strictObject({
-    code: z.enum(['invalid_request', 'unauthorized', 'not_found', 'internal_error']),
+    code: z.enum(['invalid_request', 'unauthorized', 'token_expired', 'not_found', 'internal_error']),
   }),
 });
 const COMPATIBILITY_REPOSITORY = 'github.com/yori/collector-compatibility-probe';
@@ -108,13 +108,16 @@ export async function requestCollectorSetup(apiUrl: string, token: string, repos
   if (response.status === 200) {
     const body: unknown = await response.json().catch(() => null);
     const parsed = collectorSetupResponseSchema.safeParse(body);
-    if (!parsed.success || parsed.data.repository !== repository) {
+    if (!parsed.success) {
+      throw new CollectorFailure('collector_server_incompatible');
+    }
+    if (parsed.data.repository !== repository) {
       throw new CollectorFailure('collector_internal_error');
     }
     try {
       validateRedactionPolicy(parsed.data.redaction_policy);
     } catch {
-      throw new CollectorFailure('collector_internal_error');
+      throw new CollectorFailure('collector_server_incompatible');
     }
     return {
       project_id: parsed.data.project_id,
@@ -133,6 +136,9 @@ export async function requestCollectorSetup(apiUrl: string, token: string, repos
   }
   if (response.status === 401 && code === 'unauthorized') {
     throw new CollectorFailure('collector_unauthorized');
+  }
+  if (response.status === 401 && code === 'token_expired') {
+    throw new CollectorFailure('collector_token_expired');
   }
   if (response.status === 404 && code === 'not_found') {
     throw new CollectorFailure('project_not_found');

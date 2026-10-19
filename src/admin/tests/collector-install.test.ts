@@ -313,6 +313,18 @@ describe('collector:install', () => {
     });
   });
 
+  it('setup APIの期限切れはcollector_token_expiredで失敗し、Keychainのtokenを残す', async () => {
+    await withCollectorFixture(async (fixture) => {
+      await prepareCollectorInstall(fixture, { tokenRegistered: true });
+      await writeApiSpec(fixture, [{ status: 401, body: { error: { code: 'token_expired' } } }]);
+      const run = await runRootCli(fixture, ['collector:install']);
+      assert.equal(run.code, 1);
+      assert.equal(run.stderr, 'admin: collector_token_expired\n');
+      assert.equal(existsSync(collectorConfigPath(fixture)), false);
+      assert.equal(await keychainToken(fixture), DEFAULT_TOKEN);
+    });
+  });
+
   it('新規作成予定のCodex hooks.jsonはAPI失敗時に作成しない', async () => {
     await withCollectorFixture(async (fixture) => {
       await prepareCollectorInstall(fixture, { agents: ['claude_code'] });
@@ -723,7 +735,9 @@ describe('collector:install', () => {
           'business_value',
           'old-literal',
         ]);
-        assert.equal(run.stderr, 'admin: collector_internal_error\n', `policy契約違反がcollector_internal_errorではない: ${run.stderr}`);
+        // 応答の形の違反は中央との非互換、要求と違うrepositoryの応答は形が正しいので内部errorとする。
+        const expected = invalid.repository === undefined ? 'collector_server_incompatible' : 'collector_internal_error';
+        assert.equal(run.stderr, `admin: ${expected}\n`, `setup応答の契約違反が${expected}ではない: ${run.stderr}`);
         assert.equal(existsSync(collectorConfigPath(fixture)), false);
         assert.equal(existsSync(collectorInstallRoot(fixture)), false);
       });

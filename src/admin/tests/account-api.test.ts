@@ -260,6 +260,10 @@ describe('社員・会社・token API CLI', () => {
       { args: ['token:revoke', TOKEN_ID], status: 404, body: { error: { code: 'not_found' } }, code: 'token_not_found' },
       { args: ['token:revoke', TOKEN_ID], status: 409, body: { error: { code: 'conflict' } }, code: 'last_company_admin' },
       { args: ['me'], status: 500, body: { error: { code: 'internal_error' }, marker: 'RAW_MARKER' }, code: 'collector_server_incompatible' },
+      { args: ['me'], status: 401, body: { error: { code: 'token_expired' } }, code: 'collector_token_expired' },
+      { args: ['company:show'], status: 401, body: { error: { code: 'token_expired' } }, code: 'collector_token_expired' },
+      { args: ['me'], status: 200, body: { ...meResponse, marker: 'RAW_MARKER' }, code: 'collector_server_incompatible' },
+      { args: ['company:show'], status: 200, body: { ...companyResponse, marker: 'RAW_MARKER' }, code: 'collector_server_incompatible' },
     ]) {
       await withCollectorFixture(async (fixture) => {
         const adminCommand = fixtureCase.args[0] !== 'me';
@@ -295,6 +299,18 @@ describe('社員・会社・token API CLI', () => {
       assert.equal(run.code, 1);
       assert.equal(run.stderr, 'admin: forbidden\n');
       assert.equal(await adminKeychainToken(fixture), null);
+    });
+  });
+
+  it('管理用Keychainのtokenが期限切れなら再発行に使えるよう削除しない', async () => {
+    await withCollectorFixture(async (fixture) => {
+      await writeFile(fixture.adminKeychainPath, ADMIN_TOKEN, 'utf8');
+      await writeApiSpec(fixture, [{ status: 401, body: { error: { code: 'token_expired' } } }], { includeCompatibilityProbe: false });
+
+      const run = await runRootCli(fixture, ['company:show']);
+      assert.equal(run.code, 1);
+      assert.equal(run.stderr, 'admin: collector_token_expired\n');
+      assert.equal(await adminKeychainToken(fixture), ADMIN_TOKEN);
     });
   });
 });

@@ -363,9 +363,11 @@ repositoryはUTF-8で1024バイト以内。host小文字・先頭slashなし・�
 | `collector_keychain_error` | Keychain token / known secretの登録・取得・削除に失敗した |
 | `collector_repository_not_found` | cwdのgit originをcanonical repositoryへ解決できない |
 | `collector_invalid_request` / `collector_unauthorized` | setup APIが400 / 401を返した。collector:secretのlabel・値・上限・未登録label違反も `collector_invalid_request` |
+| `collector_token_expired` | tokenの期限が切れている（setup・社員・会社・案件のAPIが401 `token_expired`を返した）。Keychainのtokenは消さない。社員のtokenは期限から14日以内なら `collector:renew` で再発行し、それ以外は管理者に新しいtokenの発行を依頼する |
+| `collector_server_incompatible` | 中央の応答がこの版のCLIと合わない（旧APIのroute-not-found、知らないerror code、200応答の形の違反）。中央とyori-cliのversionを揃える |
 | `launcher_error`（collector stderr） | stable launcherがindex不正・Keychain item欠落・known secret制限違反を検出し、子collectorを起動しなかった |
 | `launcher_error`（mcp stderr） | MCP launcherが設定・install状態を読めない、またはKeychainにtokenが無く、子MCPを起動しなかった |
-| `collector_internal_error` | setup APIの500・transport error・応答契約違反。collector:secret indexの破損も含む |
+| `collector_internal_error` | setup APIの500・transport error・要求と違うrepositoryの応答。collector:secret indexの破損も含む |
 | `collector_not_installed` | `collector:update` / `collector:backfill` / `collector:export` の対象となるinstall状態が無い |
 | `collector_backfill_error` | 配布collectorのbackfillが固定契約外の出力または失敗を返した |
 | `collector_export_error` | 配布collectorのexportが中央へ届かない・保存に失敗した・固定契約外の出力を返した。launcherがKeychainのtokenを読めない場合も含む |

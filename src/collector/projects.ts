@@ -14,7 +14,7 @@ const projectOutputSchema = z.strictObject({
 });
 const projectErrorSchema = z.strictObject({
   error: z.strictObject({
-    code: z.enum(['invalid_request', 'unauthorized', 'forbidden', 'not_found', 'repository_conflict', 'internal_error']),
+    code: z.enum(['invalid_request', 'unauthorized', 'token_expired', 'forbidden', 'not_found', 'repository_conflict', 'internal_error']),
   }),
 });
 
@@ -31,6 +31,9 @@ function mapApiFailure(status: number, body: unknown): never {
   }
   if (status === 401 && code === 'unauthorized') {
     throw new CollectorFailure('collector_unauthorized');
+  }
+  if (status === 401 && code === 'token_expired') {
+    throw new CollectorFailure('collector_token_expired');
   }
   if (status === 403 && code === 'forbidden') {
     throw new CollectorFailure('forbidden');
@@ -62,7 +65,10 @@ async function requestProjectRegistration(apiUrl: string, token: string, reposit
   const body: unknown = await response.json().catch(() => null);
   if (response.status === 200 || response.status === 201) {
     const parsed = projectOutputSchema.safeParse(body);
-    if (!parsed.success || parsed.data.repository !== repository) {
+    if (!parsed.success) {
+      throw new CollectorFailure('collector_server_incompatible');
+    }
+    if (parsed.data.repository !== repository) {
       throw new CollectorFailure('collector_internal_error');
     }
     return parsed.data;
