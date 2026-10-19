@@ -28,12 +28,12 @@ describe('社員向けproject API CLI', () => {
         await writeFile(fixture.keychainPath, DEFAULT_TOKEN, 'utf8');
         await writeApiSpec(
           fixture,
-          [{ status: status === 'done' ? 201 : 200, body: { status, project_id: PROJECT_ID, repository: REPOSITORY } }],
+          [{ status: status === 'done' ? 201 : 200, body: { status, project_id: PROJECT_ID, repository: REPOSITORY, members_only: true } }],
           { includeCompatibilityProbe: false },
         );
 
         const output = parseCollectorSuccess(await runRootCli(fixture, ['project:add']));
-        assert.deepEqual(output, { status, project_id: PROJECT_ID, repository: REPOSITORY });
+        assert.deepEqual(output, { status, project_id: PROJECT_ID, repository: REPOSITORY, members_only: true });
         const requests = await readApiRequests(fixture);
         assert.equal(requests.length, 1);
         assert.equal(requests[0].url, `${DEFAULT_API_URL}/v1/projects`);
@@ -48,7 +48,7 @@ describe('社員向けproject API CLI', () => {
     await withCollectorFixture(async (fixture) => {
       await writeApiSpec(
         fixture,
-        [{ status: 201, body: { status: 'done', project_id: PROJECT_ID, repository: REPOSITORY } }],
+        [{ status: 201, body: { status: 'done', project_id: PROJECT_ID, repository: REPOSITORY, members_only: false } }],
         { includeCompatibilityProbe: false },
       );
       parseCollectorSuccess(await runRootCli(fixture, ['project:add'], { input: `${DEFAULT_TOKEN}\n` }));

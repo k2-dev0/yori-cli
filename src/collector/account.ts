@@ -15,12 +15,18 @@ const tokenScopeSchema = z.enum(['employee', 'company_admin']);
 const timestampSchema = z.iso.datetime({ offset: true });
 const companySchema = z.strictObject({ company_id: z.uuid(), name: z.string().min(1) });
 const employeeSchema = z.strictObject({ employee_id: z.uuid(), display_name: z.string().min(1), created_at: timestampSchema });
-const projectSchema = z.strictObject({ project_id: z.uuid(), repository: z.string().min(1), created_at: timestampSchema });
+const projectSchema = z.strictObject({
+  project_id: z.uuid(),
+  repository: z.string().min(1),
+  created_at: timestampSchema,
+  members_only: z.boolean(),
+});
 const tokenMetadataSchema = z.strictObject({
   token_id: z.uuid(),
   employee_id: z.uuid(),
   scope: tokenScopeSchema,
   created_at: timestampSchema,
+  expires_at: timestampSchema,
   revoked_at: timestampSchema.nullable(),
 });
 const meResponseSchema = z.strictObject({

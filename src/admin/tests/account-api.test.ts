@@ -18,20 +18,23 @@ const TOKEN_ID = '01930000-0000-7000-8000-000000000083';
 const PROJECT_ID = '01930000-0000-7000-8000-000000000084';
 const NEW_EMPLOYEE_ID = '01930000-0000-7000-8000-000000000085';
 const CREATED_AT = '2026-09-30T00:00:00.000Z';
+const EXPIRES_AT = '2026-12-29T00:00:00.000Z';
 const ADMIN_TOKEN = 'yori_fixture_admin_token_7f3d2a';
 
 const meResponse = {
   company: { company_id: COMPANY_ID, name: 'example' },
   employee: { employee_id: EMPLOYEE_ID, display_name: 'Alice', created_at: CREATED_AT },
-  token: { token_id: TOKEN_ID, scope: 'employee', created_at: CREATED_AT, revoked_at: null },
-  projects: [{ project_id: PROJECT_ID, repository: 'github.com/example/repo', created_at: CREATED_AT }],
+  token: { token_id: TOKEN_ID, scope: 'employee', created_at: CREATED_AT, expires_at: EXPIRES_AT, revoked_at: null },
+  projects: [{ project_id: PROJECT_ID, repository: 'github.com/example/repo', created_at: CREATED_AT, members_only: true }],
 };
 
 const companyResponse = {
   company: { company_id: COMPANY_ID, name: 'example' },
   employees: [{ employee_id: EMPLOYEE_ID, display_name: 'Alice', created_at: CREATED_AT }],
-  projects: [{ project_id: PROJECT_ID, repository: 'github.com/example/repo', created_at: CREATED_AT }],
-  tokens: [{ token_id: TOKEN_ID, employee_id: EMPLOYEE_ID, scope: 'company_admin', created_at: CREATED_AT, revoked_at: null }],
+  projects: [{ project_id: PROJECT_ID, repository: 'github.com/example/repo', created_at: CREATED_AT, members_only: true }],
+  tokens: [
+    { token_id: TOKEN_ID, employee_id: EMPLOYEE_ID, scope: 'company_admin', created_at: CREATED_AT, expires_at: EXPIRES_AT, revoked_at: null },
+  ],
 };
 
 describe('社員・会社・token API CLI', () => {

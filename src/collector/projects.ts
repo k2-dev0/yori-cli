@@ -10,6 +10,7 @@ const projectOutputSchema = z.strictObject({
   status: z.enum(['done', 'already']),
   project_id: z.uuid(),
   repository: z.string().min(1),
+  members_only: z.boolean(),
 });
 const projectErrorSchema = z.strictObject({
   error: z.strictObject({
