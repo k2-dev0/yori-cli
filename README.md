@@ -139,7 +139,7 @@ DATABASE_URL='<database-url>' npm run --silent yori -- <command> [argument]
 | `token:revoke <file.json>` | 認証トークンを失効させる |
 | `token:revoke <token-id>` | company admin tokenでtokenを失効する |
 | `me` | 本人・会社・現在token metadata・会社projectを表示する |
-| `company:show` | company admin tokenで会社・社員・project・token metadataを表示する |
+| `company:show` | company admin tokenで会社・社員・project・token metadata・許可IP範囲（`allowed_ips`。空なら制限なし）を表示する |
 | `inspect <company-uuid>` | 指定した会社の社員、案件、案件メンバー、認証トークンを表示する |
 | `usage <company-uuid> [--days <n>]` | 指定した会社の外部API（Jev・Voyage）の費用と所要時間、jobの待ち・処理時間、自動検索の所要時間を集計する |
 | `redaction:replace <file.json>` | 会社のcustom伏せ字fields/terms policyを置換する（詳細は[docs/admin.md](docs/admin.md)） |

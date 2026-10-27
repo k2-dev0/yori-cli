@@ -24,7 +24,7 @@ npx --yes --package=yori-cli@<reviewed-version> yori inspect <company-uuid>
 
 `project:add`もDBへ直接接続せず、KeychainのYori tokenでHTTPS APIを呼ぶ。cwdのcanonical repositoryをtokenの会社へ登録し、新規は`done`、登録済みは`already`として終了コード0を返す。同じ会社の社員は登録済みprojectを共通利用する。
 
-`me`は通常tokenで本人・会社・現在token metadata・会社projectを取得する。`company:show`、`employee:add <display-name>`、`employee:rename <employee-id> <new-display-name>`、`token:issue <employee-id> --scope employee|company_admin`、`token:revoke <token-id>`はcompany admin tokenをKeychain service `online.yori.admin`へ通常tokenと分離して保存し、HTTPS APIを呼ぶ。会社・token一覧はmetadataだけを返し、生tokenは発行成功時に一度だけstdoutへ出す。token hashは返さない。
+`me`は通常tokenで本人・会社・現在token metadata・会社projectを取得する。`company:show`、`employee:add <display-name>`、`employee:rename <employee-id> <new-display-name>`、`token:issue <employee-id> --scope employee|company_admin`、`token:revoke <token-id>`はcompany admin tokenをKeychain service `online.yori.admin`へ通常tokenと分離して保存し、HTTPS APIを呼ぶ。会社・token一覧はmetadataだけを返し、生tokenは発行成功時に一度だけstdoutへ出す。token hashは返さない。`company:show`は`GET /v1/company`に続けて`GET /v1/allowed-ips`を呼び、tokenの会社に許可されたIP範囲を`allowed_ips`（CIDRの配列）として出力へ加える。空配列は制限なし。全社分は返さない。許可IPが1件以上ある会社では、実行元のIPもその範囲に入っている必要がある。
 
 ### リポジトリ内（開発時）
 

@@ -41,6 +41,7 @@ const companyResponseSchema = z.strictObject({
   projects: z.array(projectSchema),
   tokens: z.array(tokenMetadataSchema),
 });
+const allowedIpsResponseSchema = z.strictObject({ cidrs: z.array(z.string()) });
 const memberCreateResponseSchema = employeeSchema.extend({ status: z.literal('done') });
 const employeeRenameResponseSchema = z.strictObject({
   status: z.literal('done'),
@@ -64,7 +65,7 @@ const accountErrorSchema = z.strictObject({
 
 export type TokenScope = z.infer<typeof tokenScopeSchema>;
 export type MeOutput = z.infer<typeof meResponseSchema>;
-export type CompanyOutput = z.infer<typeof companyResponseSchema>;
+export type CompanyOutput = z.infer<typeof companyResponseSchema> & { allowed_ips: string[] };
 export type MemberCreateOutput = z.infer<typeof memberCreateResponseSchema>;
 export type EmployeeRenameOutput = z.infer<typeof employeeRenameResponseSchema>;
 export type TokenIssueOutput = z.infer<typeof issueResponseSchema>;
@@ -187,11 +188,14 @@ export async function loadMeViaApi(env: NodeJS.ProcessEnv): Promise<AdminResult<
   );
 }
 
+// 会社の概要に、同じtokenの会社の許可IPを続けて取得して合わせる。
 export async function loadCompanyViaApi(env: NodeJS.ProcessEnv): Promise<AdminResult<CompanyOutput>> {
   return accountResult(() =>
-    withAccountToken(env, true, (apiUrl, token) =>
-      requestJson(apiUrl, token, '/v1/company', { method: 'GET' }, 200, companyResponseSchema, 'company_not_found', 'internal_error'),
-    ),
+    withAccountToken(env, true, async (apiUrl, token) => {
+      const company = await requestJson(apiUrl, token, '/v1/company', { method: 'GET' }, 200, companyResponseSchema, 'company_not_found', 'internal_error');
+      const allowedIps = await requestJson(apiUrl, token, '/v1/allowed-ips', { method: 'GET' }, 200, allowedIpsResponseSchema, 'company_not_found', 'internal_error');
+      return { ...company, allowed_ips: allowedIps.cidrs };
+    }),
   );
 }
 
