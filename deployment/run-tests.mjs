@@ -16,7 +16,8 @@ if (TEST_PROJECT_NAME === 'yori') {
   process.exit(1);
 }
 // 開発用DBと衝突しないloopback port。ホストのテストはこのportのDBだけを見る。
-const TEST_DB_PORT = process.env.YORI_CLI_TEST_DB_PORT ?? '55432';
+// 55432 は yori の評価用 DB が使うため避ける。
+const TEST_DB_PORT = process.env.YORI_CLI_TEST_DB_PORT ?? '55442';
 const TEST_ENV = {
   ...process.env,
   DATABASE_URL: `postgres://yori:yori@127.0.0.1:${TEST_DB_PORT}/yori`,
