@@ -1,5 +1,5 @@
-// yori MCPの端末側launcherと、Codex・Claude Codeへの登録。token本文は設定file・引数へ書かず、launcherが子MCPのenvへだけ渡す。
-import { readFile } from 'node:fs/promises';
+// yori MCPの端末側launcherと、Codex・Claude Code・Cursorへの登録。token本文は設定file・引数へ書かず、launcherが子MCPのenvへだけ渡す。
+import { lstat, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { parse as parseToml } from 'smol-toml';
@@ -57,8 +57,11 @@ const MCP_LAUNCHER_SPAWN = [
 
 const SERVER = contract.COLLECTOR_MCP_SERVER_NAME;
 // 読み取り系は確認なし、書き込み系は確認ありにする。
-const READ_TOOLS = ['get_search_result', 'get_evidence', 'search_history'];
-const WRITE_TOOLS = ['record_case', 'link_session'];
+const READ_TOOLS = ['get_search_result', 'get_evidence', 'search_history', 'get_share', 'list_project_members'];
+const WRITE_TOOLS = ['record_case', 'link_session', 'share_session'];
+// Cursorはhookを持たないためagentには加えず、導入済みの端末だけMCPを登録する。
+const CURSOR_DIRECTORY = '.cursor';
+const CURSOR_MCP_CONFIG_FILE = 'mcp.json';
 const CODEX_APPROVAL_WITHOUT_PROMPT = 'approve';
 const CODEX_APPROVAL_WITH_PROMPT = 'prompt';
 type McpAction = 'install' | 'uninstall';
@@ -83,8 +86,8 @@ function formatJson(json: Record<string, unknown>): string {
   return `${JSON.stringify(json, null, 2)}\n`;
 }
 
-// ~/.claude.jsonのmcpServersからyoriだけを置換・除去する。内容が同じなら書かない。
-function claudeMcpServersRender(launcherPath: string, action: McpAction): McpRender {
+// ~/.claude.jsonと~/.cursor/mcp.jsonのmcpServersからyoriだけを置換・除去する。内容が同じなら書かない。
+function mcpServersRender(launcherPath: string, action: McpAction): McpRender {
   const entry = { type: 'stdio', command: process.execPath, args: [launcherPath], env: {} };
   return (text) => {
     const json = parseJsonObject(text);
@@ -208,8 +211,17 @@ function mcpTargets(home: string, agent: CollectorAgent, launcherPath: string, a
   if (agent === 'codex') {
     return [{ path: path.join(home, '.codex', 'config.toml'), render: codexMcpRender(launcherPath, action) }];
   }
-  const servers = { path: path.join(home, '.claude.json'), render: claudeMcpServersRender(launcherPath, action) };
+  const servers = { path: path.join(home, '.claude.json'), render: mcpServersRender(launcherPath, action) };
   return [servers, { path: collectorHookPath(home, agent), render: claudePermissionsRender(action) }];
+}
+
+// ~/.cursorはCursor導入の目印にする。無い端末にdirectoryもfileも作らない。
+async function cursorMcpTarget(home: string, launcherPath: string, action: McpAction): Promise<{ path: string; render: McpRender } | null> {
+  const directory = await lstat(path.join(home, CURSOR_DIRECTORY)).catch(() => null);
+  if (directory === null || !directory.isDirectory()) {
+    return null;
+  }
+  return { path: path.join(home, CURSOR_DIRECTORY, CURSOR_MCP_CONFIG_FILE), render: mcpServersRender(launcherPath, action) };
 }
 
 // 不正なJSON・TOMLは固定codeへ縮退させ、parserのerror本文を外へ出さない。
@@ -234,7 +246,12 @@ export async function planCollectorMcp(
 ): Promise<CollectorHookUpdate[]> {
   const updates = hookUpdates.map((update) => ({ ...update }));
   const launcherPath = collectorMcpLauncherPath(home);
-  for (const target of agents.flatMap((agent) => mcpTargets(home, agent, launcherPath, action))) {
+  const targets = agents.flatMap((agent) => mcpTargets(home, agent, launcherPath, action));
+  const cursor = await cursorMcpTarget(home, launcherPath, action);
+  if (cursor !== null) {
+    targets.push(cursor);
+  }
+  for (const target of targets) {
     const loaded = await loadMcpFile(target.path, home);
     const planned = updates.find((update) => update.path === loaded.path);
     const base = planned ?? loaded;

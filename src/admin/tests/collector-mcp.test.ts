@@ -1,7 +1,8 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { parse as parseTomlRaw } from 'smol-toml';
 import {
@@ -31,8 +32,8 @@ function parseToml(text: string): Record<string, unknown> {
   return JSON.parse(JSON.stringify(parseTomlRaw(text))) as Record<string, unknown>;
 }
 
-const READ_TOOLS = ['get_search_result', 'get_evidence', 'search_history'];
-const WRITE_TOOLS = ['record_case', 'link_session'];
+const READ_TOOLS = ['get_search_result', 'get_evidence', 'search_history', 'get_share', 'list_project_members'];
+const WRITE_TOOLS = ['record_case', 'link_session', 'share_session'];
 const CLAUDE_READ_RULES = READ_TOOLS.map((tool) => `mcp__yori__${tool}`);
 
 const EXISTING_CODEX_TOML = `# 利用者のコメントは保持する
@@ -54,6 +55,10 @@ function claudeConfigPath(fixture: CollectorFixture): string {
   return path.join(fixture.home, '.claude.json');
 }
 
+function cursorConfigPath(fixture: CollectorFixture): string {
+  return path.join(fixture.home, '.cursor', 'mcp.json');
+}
+
 function mcpLauncherPath(fixture: CollectorFixture): string {
   return path.join(collectorInstallRoot(fixture), 'mcp-launcher.mjs');
 }
@@ -66,9 +71,14 @@ async function readJson(filePath: string): Promise<Record<string, unknown>> {
   return JSON.parse((await readText(filePath)) ?? '{}') as Record<string, unknown>;
 }
 
-// MCP登録が触る3 fileの本文。冪等性は本文の完全一致で検証する。
+// MCP登録が触る4 fileの本文。冪等性は本文の完全一致で検証する。
 async function mcpFileTexts(fixture: CollectorFixture): Promise<(string | null)[]> {
-  return Promise.all([readText(codexConfigPath(fixture)), readText(claudeConfigPath(fixture)), readText(hookPath(fixture, 'claude_code'))]);
+  return Promise.all([
+    readText(codexConfigPath(fixture)),
+    readText(claudeConfigPath(fixture)),
+    readText(hookPath(fixture, 'claude_code')),
+    readText(cursorConfigPath(fixture)),
+  ]);
 }
 
 async function runOk(fixture: CollectorFixture, command: string): Promise<Record<string, unknown>> {
@@ -325,6 +335,100 @@ describe('collector MCP登録', () => {
       assert.equal(run.status, 1);
       assert.equal(run.stdout, '', '子MCPを起動している');
       assert.equal(run.stderr, 'mcp: launcher_error\n');
+    });
+  });
+
+  it('~/.cursorが無ければCursorのmcp.jsonを作らない', async () => {
+    await withCollectorFixture(async (fixture) => {
+      await prepareCollectorInstall(fixture);
+      await runOk(fixture, 'collector:install');
+      assert.equal(existsSync(path.join(fixture.home, '.cursor')), false, 'Cursor未導入の端末に.cursorを作っている');
+      assert.equal(await readText(cursorConfigPath(fixture)), null, 'Cursor未導入の端末にmcp.jsonを作っている');
+    });
+  });
+
+  it('~/.cursorがありmcp.jsonが無ければinstallでyoriのentryを作る', async () => {
+    await withCollectorFixture(async (fixture) => {
+      await prepareCollectorInstall(fixture);
+      await mkdir(path.join(fixture.home, '.cursor'), { recursive: true });
+      await runOk(fixture, 'collector:install');
+      assert.deepEqual(await readJson(cursorConfigPath(fixture)), {
+        mcpServers: { yori: { type: 'stdio', command: process.execPath, args: [mcpLauncherPath(fixture)], env: {} } },
+      });
+    });
+  });
+
+  it('~/.cursorがある時だけyoriを登録し、他のserverとkeyを保ち、再installでも書き換えない', async () => {
+    await withCollectorFixture(async (fixture) => {
+      await prepareCollectorInstall(fixture);
+      await mkdir(path.join(fixture.home, '.cursor'), { recursive: true });
+      const other = { type: 'stdio', command: 'other-server', args: ['--flag'], env: {} };
+      await writeFile(cursorConfigPath(fixture), `${JSON.stringify({ editor: { keep: true }, mcpServers: { other } }, null, 2)}\n`, 'utf8');
+
+      await runOk(fixture, 'collector:install');
+      const afterInstall = await readText(cursorConfigPath(fixture));
+      const installed = await readJson(cursorConfigPath(fixture));
+      const launcher = mcpLauncherPath(fixture);
+      assert.deepEqual(
+        (installed.mcpServers as Record<string, unknown>).yori,
+        { type: 'stdio', command: process.execPath, args: [launcher], env: {} },
+        'CursorへClaude Codeと同じ起動の仕方でyori MCPを登録していない',
+      );
+      assert.deepEqual((installed.mcpServers as Record<string, unknown>).other, other, 'Cursorの他のserverを変更している');
+      assert.deepEqual(installed.editor, { keep: true }, 'Cursorの無関係なkeyを変更している');
+
+      await runOk(fixture, 'collector:install');
+      await runOk(fixture, 'collector:update');
+      assert.equal(await readText(cursorConfigPath(fixture)), afterInstall, '再install/updateでCursorのmcp.jsonが変わった');
+    });
+  });
+
+  it('uninstallはCursorのyori項目だけを削除し、他のserverとkeyを残す', async () => {
+    await withCollectorFixture(async (fixture) => {
+      await prepareCollectorInstall(fixture);
+      await mkdir(path.join(fixture.home, '.cursor'), { recursive: true });
+      const other = { type: 'stdio', command: 'other-server', args: [], env: {} };
+      await writeFile(cursorConfigPath(fixture), `${JSON.stringify({ editor: { keep: true }, mcpServers: { other } }, null, 2)}\n`, 'utf8');
+      await runOk(fixture, 'collector:install');
+
+      parseCollectorSuccess(await runRootCli(fixture, ['collector:uninstall']));
+      assert.deepEqual(await readJson(cursorConfigPath(fixture)), { editor: { keep: true }, mcpServers: { other } });
+    });
+  });
+
+  it('Cursorのmcp.jsonが不正なJSONならcollector_hook_invalidで無変更のまま失敗する', async () => {
+    await withCollectorFixture(async (fixture) => {
+      await prepareCollectorInstall(fixture);
+      await mkdir(path.join(fixture.home, '.cursor'), { recursive: true });
+      await writeFile(cursorConfigPath(fixture), '{ not json', 'utf8');
+      const before = await mcpFileTexts(fixture);
+
+      const stderr = assertCollectorFailure(await runRootCli(fixture, ['collector:install']), [DEFAULT_TOKEN]);
+      assert.equal(stderr, 'admin: collector_hook_invalid\n');
+      assert.deepEqual(await mcpFileTexts(fixture), before, '失敗時に設定を変更している');
+      assert.deepEqual(await listFilesRecursively(collectorInstallRoot(fixture)), [], '失敗時にinstall rootを作っている');
+    });
+  });
+
+  it('doctorは~/.cursorがある時だけCursorのMCP登録の最新さを判定する', async () => {
+    await withCollectorFixture(async (fixture) => {
+      await prepareCollectorInstall(fixture);
+      await mkdir(path.join(fixture.home, '.cursor'), { recursive: true });
+      await runOk(fixture, 'collector:install');
+
+      const current = await runOk(fixture, 'collector:doctor');
+      assert.equal((current.checks as Record<string, boolean>).mcp, true, 'doctorが最新のCursor登録を異常にしている');
+
+      const staleConfig = await readJson(cursorConfigPath(fixture));
+      const servers = staleConfig.mcpServers as Record<string, { args: string[] }>;
+      servers.yori.args = ['old-launcher.mjs'];
+      await writeFile(cursorConfigPath(fixture), `${JSON.stringify(staleConfig, null, 2)}\n`, 'utf8');
+      const stale = await runOk(fixture, 'collector:doctor');
+      assert.equal((stale.checks as Record<string, boolean>).mcp, false, 'doctorが古いCursor登録を最新としている');
+
+      await rm(path.join(fixture.home, '.cursor'), { recursive: true, force: true });
+      const absent = await runOk(fixture, 'collector:doctor');
+      assert.equal((absent.checks as Record<string, boolean>).mcp, true, 'doctorが~/.cursorの無い端末でCursor登録を要求している');
     });
   });
 });
